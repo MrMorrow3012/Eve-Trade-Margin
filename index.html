@@ -33,7 +33,7 @@
     min-height:100vh;
     padding-bottom:3rem;
   }
-  .wrap{max-width:920px; margin:0 auto; padding:1.25rem 1rem 2rem;}
+  .wrap{max-width:960px; margin:0 auto; padding:1.25rem 1rem 2rem;}
 
   header{
     display:flex; align-items:baseline; justify-content:space-between;
@@ -105,6 +105,7 @@
   }
   .scan-btn:disabled{opacity:0.5; cursor:wait;}
   .scan-btn:hover:not(:disabled){filter:brightness(1.08);}
+  .haul-btn{width:auto !important; margin-top:0 !important; padding:0.6rem 1.1rem;}
 
   .status-line{
     font-family:'JetBrains Mono',monospace; font-size:0.78rem; color:var(--muted);
@@ -142,15 +143,32 @@
   }
   .col-toggle-grid .opt{font-size:0.72rem;}
 
+  /* automatic hauling finder */
+  .haul-finder-panel summary{
+    cursor:pointer; font-family:'Rajdhani',sans-serif; font-weight:700; font-size:1rem;
+    letter-spacing:0.04em; color:var(--text); list-style:none;
+  }
+  .haul-finder-panel summary::-webkit-details-marker{display:none;}
+  .haul-finder-panel summary::before{content:'▸ '; color:var(--cyan);}
+  .haul-finder-panel[open] summary::before{content:'▾ '; color:var(--cyan);}
+  .haul-finder-body{margin-top:0.9rem;}
+  .haul-finder-blurb{font-size:0.78rem; color:var(--muted); margin-bottom:0.9rem; line-height:1.5;}
+  .haul-summary-row{
+    display:flex; justify-content:space-between; flex-wrap:wrap; gap:0.5rem 1rem;
+    font-family:'JetBrains Mono',monospace; font-size:0.78rem; color:var(--muted);
+    margin:0.9rem 0 0.6rem; padding:0.7rem; background:var(--panel-raised); border-radius:7px; border:1px solid var(--line);
+  }
+  .haul-summary-row b{color:var(--green); font-weight:600;}
+
   table{width:100%; border-collapse:collapse; font-size:0.82rem;}
   thead th{
     text-align:left; font-family:'JetBrains Mono',monospace; font-size:0.65rem;
     letter-spacing:0.06em; text-transform:uppercase; color:var(--muted);
-    padding:0.5rem 0.5rem; border-bottom:1px solid var(--line);
+    padding:0.5rem 0.45rem; border-bottom:1px solid var(--line);
     cursor:pointer; user-select:none; white-space:nowrap;
   }
   thead th:hover{color:var(--cyan);}
-  tbody td{padding:0.55rem 0.5rem; border-bottom:1px solid var(--line); white-space:nowrap;}
+  tbody td{padding:0.5rem 0.45rem; border-bottom:1px solid var(--line); white-space:nowrap;}
   tbody tr:hover{background:var(--panel-raised);}
   .item-name{color:var(--text); font-weight:500; max-width:220px; overflow:hidden; text-overflow:ellipsis;}
   .num{font-family:'JetBrains Mono',monospace; text-align:right;}
@@ -171,8 +189,10 @@
   }
 
   @media (max-width:520px){
-    .item-name{max-width:120px;}
-    table{font-size:0.74rem;}
+    .wrap{padding-left:0.5rem; padding-right:0.5rem;}
+    .item-name{max-width:110px;}
+    table{font-size:0.72rem;}
+    thead th, tbody td{padding-left:0.35rem; padding-right:0.35rem;}
   }
 </style>
 </head>
@@ -211,10 +231,27 @@
   <div id="routePanel"></div>
   <div id="results"></div>
 
+  <details class="panel haul-finder-panel" id="haulFinderDetails">
+    <summary>Automatic Hauling Finder</summary>
+    <div class="haul-finder-body">
+      <p class="haul-finder-blurb">Enter your ship's cargo capacity and this fills it with items from your last scan, highest ISK/m³ first, for the most profit that fits in the hold.</p>
+      <div class="row">
+        <div class="field">
+          <label for="cargoCapacity">Cargo capacity (m³)</label>
+          <input type="number" id="cargoCapacity" placeholder="e.g. 5000" min="0" step="any">
+        </div>
+        <button class="scan-btn haul-btn" id="findHaul">Find optimal haul</button>
+      </div>
+      <div id="haulResults"></div>
+    </div>
+  </details>
+
   <footer>
     Data via EVE ESI (esi.evetech.net) · Public market endpoints, no login required<br>
-    m³ and daily volume load after the main scan — large result sets take a bit longer.<br>
-    Avg daily volume is region-wide (ESI has no per-station history), not station-only.<br>
+    m³, daily volume, and liquidity load after the main scan — large result sets take longer.<br>
+    Avg daily volume is region-wide over the last 30 days (ESI has no per-station history).<br>
+    Liquidity % = item's own daily volume vs. 5% of all scanned items' combined volume, capped at 100%.<br>
+    Hauling Finder packs greedily by ISK/m³ — very close to optimal, not a guaranteed perfect max.<br>
     Prices reflect the moment you scan — always double-check before undocking.
   </footer>
 
@@ -317,7 +354,7 @@ async function getTypeVolume(typeId) {
   }
 }
 
-// average daily traded volume, last 7 days, region-wide (ESI history has no per-station granularity)
+// average daily traded volume, last 30 days, region-wide (ESI history has no per-station granularity)
 const historyCache = {};
 async function getAvgDailyVolume(regionId, typeId) {
   const key = `${regionId}:${typeId}`;
@@ -327,7 +364,7 @@ async function getAvgDailyVolume(regionId, typeId) {
     if (!resp.ok) { historyCache[key] = null; return null; }
     const data = await resp.json();
     if (!Array.isArray(data) || !data.length) { historyCache[key] = 0; return 0; }
-    const recent = data.slice(-7);
+    const recent = data.slice(-30);
     const avg = recent.reduce((sum, d) => sum + (d.volume || 0), 0) / recent.length;
     historyCache[key] = avg;
     return avg;
@@ -403,16 +440,16 @@ function isNpcOrder(order) {
 
 // Column registry drives both the table and the show/hide toggle panel.
 const COLUMNS = [
-  { key: 'buyPrice',      label: 'Buy @ origin',         fmt: r => r.buyPrice.toLocaleString(undefined,{maximumFractionDigits:2}) },
-  { key: 'sellPrice',     label: 'Sell @ dest',          fmt: r => r.sellPrice.toLocaleString(undefined,{maximumFractionDigits:2}) },
-  { key: 'marginUnit',    label: 'Margin/unit',          fmt: r => r.marginUnit.toLocaleString(undefined,{maximumFractionDigits:2}), cls: 'margin-pos' },
-  { key: 'marginPct',     label: '%',                    fmt: r => r.marginPct.toFixed(1) + '%', cls: 'margin-pos' },
-  { key: 'unitsAvail',    label: 'Units avail.',         fmt: r => r.unitsAvail.toLocaleString() },
-  { key: 'marginTotal',   label: 'Potential ISK',        fmt: r => Math.round(r.marginTotal).toLocaleString(), cls: 'margin-pos' },
-  { key: 'm3',            label: 'm³/unit',              fmt: r => r.m3 != null ? r.m3.toLocaleString(undefined,{maximumFractionDigits:2}) : '…' },
-  { key: 'iskPerM3',      label: 'ISK/m³',               fmt: r => r.iskPerM3 != null ? Math.round(r.iskPerM3).toLocaleString() : (r.m3 != null ? '—' : '…'), cls: 'margin-pos' },
-  { key: 'dailyVolume',   label: 'Avg daily vol (dest)', fmt: r => r.dailyVolume != null ? Math.round(r.dailyVolume).toLocaleString() : '…' },
-  { key: 'pctOfDailyVol', label: '% of daily vol',       fmt: r => r.pctOfDailyVol != null ? r.pctOfDailyVol.toFixed(1) + '%' : (r.dailyVolume != null ? '—' : '…') },
+  { key: 'buyPrice',      label: 'Buy @ origin',    fmt: r => r.buyPrice.toLocaleString(undefined,{maximumFractionDigits:2}) },
+  { key: 'sellPrice',     label: 'Sell @ dest',      fmt: r => r.sellPrice.toLocaleString(undefined,{maximumFractionDigits:2}) },
+  { key: 'marginUnit',    label: 'Margin/unit',      fmt: r => r.marginUnit.toLocaleString(undefined,{maximumFractionDigits:2}), cls: 'margin-pos' },
+  { key: 'marginPct',     label: '%',                fmt: r => r.marginPct.toFixed(1) + '%', cls: 'margin-pos' },
+  { key: 'unitsAvail',    label: 'Units avail.',     fmt: r => r.unitsAvail.toLocaleString() },
+  { key: 'marginTotal',   label: 'Potential ISK',    fmt: r => Math.round(r.marginTotal).toLocaleString(), cls: 'margin-pos' },
+  { key: 'm3',            label: 'm³/unit',          fmt: r => r.m3 != null ? r.m3.toLocaleString(undefined,{maximumFractionDigits:2}) : '…' },
+  { key: 'iskPerM3',      label: 'ISK/m³',           fmt: r => r.iskPerM3 != null ? Math.round(r.iskPerM3).toLocaleString() : (r.m3 != null ? '—' : '…'), cls: 'margin-pos' },
+  { key: 'dailyVolume',   label: 'Daily vol (30d)',  fmt: r => r.dailyVolume != null ? Math.round(r.dailyVolume).toLocaleString() : '…' },
+  { key: 'pctOfDailyVol', label: 'Liquidity %',      fmt: r => r.pctOfDailyVol != null ? r.pctOfDailyVol.toFixed(1) + '%' : (r.dailyVolume != null ? '—' : '…') },
 ];
 
 let visibleCols = new Set(COLUMNS.map(c => c.key));
@@ -439,6 +476,11 @@ function renderColumnToggles() {
 }
 
 function renderTable() {
+  // preserve horizontal scroll position across sorts/toggles - the table wrapper gets
+  // rebuilt from scratch each render, so without this every sort click snaps back to the left edge
+  const existingScroller = resultsEl.querySelector('.table-scroll');
+  const savedScrollLeft = existingScroller ? existingScroller.scrollLeft : 0;
+
   if (!currentRows.length) {
     resultsEl.innerHTML = `<div class="empty">No profitable overlap found between these two stations right now.</div>`;
     return;
@@ -450,7 +492,7 @@ function renderTable() {
     <div class="panel" style="padding:0.75rem 0.9rem;">
       ${renderColumnToggles()}
     </div>
-    <div class="panel" style="padding:0; overflow-x:auto;">
+    <div class="panel table-scroll" style="padding:0; overflow-x:auto;">
       <table>
         <thead>
           <tr>
@@ -488,6 +530,9 @@ function renderTable() {
       renderTable();
     });
   });
+
+  const newScroller = resultsEl.querySelector('.table-scroll');
+  if (newScroller) newScroller.scrollLeft = savedScrollLeft;
 }
 
 async function scan() {
@@ -573,7 +618,20 @@ async function scan() {
       r.m3 = m3Results[i];
       r.iskPerM3 = (typeof r.m3 === 'number' && r.m3 > 0) ? r.marginUnit / r.m3 : null;
       r.dailyVolume = dailyVolResults[i];
-      r.pctOfDailyVol = (typeof r.dailyVolume === 'number' && r.dailyVolume > 0) ? (r.unitsAvail / r.dailyVolume) * 100 : null;
+    });
+
+    // Liquidity % = this item's own daily volume against a fixed baseline of 5% of the
+    // combined daily volume across everything in this result set, capped at 100%. Without
+    // the cap (and without pooling against the whole set) a couple of ore types would blow
+    // the scale out for every other item, since ore trades in the millions/day.
+    const totalMarketDailyVolume = currentRows.reduce((sum, r) => sum + (typeof r.dailyVolume === 'number' ? r.dailyVolume : 0), 0);
+    const fivePctThreshold = totalMarketDailyVolume * 0.05;
+    currentRows.forEach(r => {
+      if (typeof r.dailyVolume === 'number' && fivePctThreshold > 0) {
+        r.pctOfDailyVol = Math.min(100, (r.dailyVolume / fivePctThreshold) * 100);
+      } else {
+        r.pctOfDailyVol = null;
+      }
     });
 
     setStatus(`Done — ${currentRows.length} profitable items found across ${routeInfo.jumps} jumps.`);
@@ -587,6 +645,89 @@ async function scan() {
 }
 
 scanBtn.addEventListener('click', scan);
+
+// --- Automatic Hauling Finder ---
+// Greedy bin-pack by ISK/m³: sort candidates by profit density descending, take as many units
+// of each as fit (bounded by both remaining capacity and units actually available), repeat.
+// This is the standard near-optimal approach for this kind of bounded knapsack - not a
+// guaranteed perfect global maximum, but very close in practice and instant to compute.
+const cargoCapacityInput = document.getElementById('cargoCapacity');
+const findHaulBtn = document.getElementById('findHaul');
+const haulResultsEl = document.getElementById('haulResults');
+
+function findOptimalHaul(capacity) {
+  const candidates = currentRows
+    .filter(r => typeof r.m3 === 'number' && r.m3 > 0 && typeof r.iskPerM3 === 'number')
+    .slice()
+    .sort((a, b) => b.iskPerM3 - a.iskPerM3);
+
+  let remaining = capacity;
+  const picks = [];
+  for (const r of candidates) {
+    if (remaining <= 0) break;
+    const maxByCapacity = Math.floor(remaining / r.m3);
+    const qty = Math.min(maxByCapacity, r.unitsAvail);
+    if (qty > 0) {
+      picks.push({ name: r.name, qty, m3Used: qty * r.m3, iskCost: qty * r.buyPrice, iskProfit: qty * r.marginUnit });
+      remaining -= qty * r.m3;
+    }
+  }
+  return { picks, m3Used: capacity - remaining };
+}
+
+function runHaulFinder() {
+  const capacity = parseFloat(cargoCapacityInput.value);
+
+  if (!currentRows.length) {
+    haulResultsEl.innerHTML = `<div class="empty" style="padding:1.2rem;">Run a scan first.</div>`;
+    return;
+  }
+  if (!capacity || capacity <= 0) {
+    haulResultsEl.innerHTML = `<div class="empty" style="padding:1.2rem;">Enter a cargo capacity greater than 0.</div>`;
+    return;
+  }
+
+  const stillLoading = currentRows.some(r => r.m3 === null);
+  const { picks, m3Used } = findOptimalHaul(capacity);
+
+  if (!picks.length) {
+    haulResultsEl.innerHTML = `<div class="empty" style="padding:1.2rem;">Nothing fits in that capacity yet — try a larger number.</div>`;
+    return;
+  }
+
+  const totalCost = picks.reduce((s, p) => s + p.iskCost, 0);
+  const totalProfit = picks.reduce((s, p) => s + p.iskProfit, 0);
+
+  haulResultsEl.innerHTML = `
+    ${stillLoading ? '<div class="status-line">Still loading cargo data for some items — results may improve once that finishes.</div>' : ''}
+    <div class="haul-summary-row">
+      <span>${m3Used.toLocaleString(undefined,{maximumFractionDigits:1})} / ${capacity.toLocaleString()} m³ used</span>
+      <span>cost: <b>${Math.round(totalCost).toLocaleString()}</b> ISK</span>
+      <span>profit: <b>${Math.round(totalProfit).toLocaleString()}</b> ISK</span>
+    </div>
+    <div class="table-scroll" style="overflow-x:auto;">
+      <table>
+        <thead>
+          <tr><th>Item</th><th class="num">Qty</th><th class="num">m³ used</th><th class="num">ISK cost</th><th class="num">ISK profit</th></tr>
+        </thead>
+        <tbody>
+          ${picks.map(p => `
+            <tr>
+              <td class="item-name">${p.name}</td>
+              <td class="num">${p.qty.toLocaleString()}</td>
+              <td class="num">${p.m3Used.toLocaleString(undefined,{maximumFractionDigits:1})}</td>
+              <td class="num">${Math.round(p.iskCost).toLocaleString()}</td>
+              <td class="num margin-pos">${Math.round(p.iskProfit).toLocaleString()}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+findHaulBtn.addEventListener('click', runHaulFinder);
+cargoCapacityInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') runHaulFinder(); });
 
 // Register service worker for offline app-shell caching
 if ('serviceWorker' in navigator) {
