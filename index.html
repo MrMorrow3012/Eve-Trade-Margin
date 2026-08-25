@@ -127,6 +127,21 @@
   .route-meta{display:flex; justify-content:space-between; font-size:0.72rem; color:var(--muted); font-family:'JetBrains Mono',monospace; margin-bottom:0.75rem;}
   .route-meta b{color:var(--text); font-weight:600;}
 
+  /* column visibility toggle */
+  .col-toggle summary{
+    cursor:pointer; font-family:'JetBrains Mono',monospace; font-size:0.72rem;
+    color:var(--cyan); letter-spacing:0.08em; text-transform:uppercase;
+    list-style:none;
+  }
+  .col-toggle summary::-webkit-details-marker{display:none;}
+  .col-toggle summary::before{content:'▸ ';}
+  .col-toggle[open] summary::before{content:'▾ ';}
+  .col-toggle-grid{
+    display:flex; flex-wrap:wrap; gap:0.5rem 1.1rem; margin-top:0.7rem;
+    padding-top:0.7rem; border-top:1px solid var(--line);
+  }
+  .col-toggle-grid .opt{font-size:0.72rem;}
+
   table{width:100%; border-collapse:collapse; font-size:0.82rem;}
   thead th{
     text-align:left; font-family:'JetBrains Mono',monospace; font-size:0.65rem;
@@ -198,6 +213,8 @@
 
   <footer>
     Data via EVE ESI (esi.evetech.net) · Public market endpoints, no login required<br>
+    m³ and daily volume load after the main scan — large result sets take a bit longer.<br>
+    Avg daily volume is region-wide (ESI has no per-station history), not station-only.<br>
     Prices reflect the moment you scan — always double-check before undocking.
   </footer>
 
@@ -256,6 +273,16 @@ async function fetchAllPages(url) {
   return data;
 }
 
+async function fetchInBatches(items, batchSize, fn) {
+  const results = [];
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchResults = await Promise.all(batch.map(fn));
+    results.push(...batchResults);
+  }
+  return results;
+}
+
 async function resolveNames(typeIds) {
   const names = {};
   const ids = [...typeIds];
@@ -273,6 +300,43 @@ async function resolveNames(typeIds) {
   return names;
 }
 
+// per-unit packaged volume (m³) - static per type, cached indefinitely
+const typeVolumeCache = {};
+async function getTypeVolume(typeId) {
+  if (typeVolumeCache[typeId] !== undefined) return typeVolumeCache[typeId];
+  try {
+    const resp = await fetch(`${ESI}/universe/types/${typeId}/`);
+    if (!resp.ok) { typeVolumeCache[typeId] = null; return null; }
+    const data = await resp.json();
+    const v = (typeof data.packaged_volume === 'number') ? data.packaged_volume : data.volume;
+    typeVolumeCache[typeId] = (typeof v === 'number') ? v : null;
+    return typeVolumeCache[typeId];
+  } catch (e) {
+    typeVolumeCache[typeId] = null;
+    return null;
+  }
+}
+
+// average daily traded volume, last 7 days, region-wide (ESI history has no per-station granularity)
+const historyCache = {};
+async function getAvgDailyVolume(regionId, typeId) {
+  const key = `${regionId}:${typeId}`;
+  if (historyCache[key] !== undefined) return historyCache[key];
+  try {
+    const resp = await fetch(`${ESI}/markets/${regionId}/history/?type_id=${typeId}`);
+    if (!resp.ok) { historyCache[key] = null; return null; }
+    const data = await resp.json();
+    if (!Array.isArray(data) || !data.length) { historyCache[key] = 0; return 0; }
+    const recent = data.slice(-7);
+    const avg = recent.reduce((sum, d) => sum + (d.volume || 0), 0) / recent.length;
+    historyCache[key] = avg;
+    return avg;
+  } catch (e) {
+    historyCache[key] = null;
+    return null;
+  }
+}
+
 const routeCache = {};
 async function getRouteInfo(originSystem, destSystem, avoidNull) {
   const key = `${originSystem}-${destSystem}-${avoidNull}`;
@@ -285,7 +349,6 @@ async function getRouteInfo(originSystem, destSystem, avoidNull) {
     if (!resp.ok) throw new Error('route fetch failed');
     systemIds = await resp.json();
   } catch (e) {
-    // fall back to shortest if secure-only route is impossible
     const resp2 = await fetch(`${ESI}/route/${originSystem}/${destSystem}/?flag=shortest`);
     systemIds = await resp2.json();
   }
@@ -335,56 +398,93 @@ function renderRoute(info) {
 }
 
 function isNpcOrder(order) {
-  const issued = new Date(order.issued);
-  const now = new Date();
-  const daysRemaining = order.duration - Math.floor((now - issued) / 86400000);
   return order.duration >= 364;
 }
 
+// Column registry drives both the table and the show/hide toggle panel.
+const COLUMNS = [
+  { key: 'buyPrice',      label: 'Buy @ origin',         fmt: r => r.buyPrice.toLocaleString(undefined,{maximumFractionDigits:2}) },
+  { key: 'sellPrice',     label: 'Sell @ dest',          fmt: r => r.sellPrice.toLocaleString(undefined,{maximumFractionDigits:2}) },
+  { key: 'marginUnit',    label: 'Margin/unit',          fmt: r => r.marginUnit.toLocaleString(undefined,{maximumFractionDigits:2}), cls: 'margin-pos' },
+  { key: 'marginPct',     label: '%',                    fmt: r => r.marginPct.toFixed(1) + '%', cls: 'margin-pos' },
+  { key: 'unitsAvail',    label: 'Units avail.',         fmt: r => r.unitsAvail.toLocaleString() },
+  { key: 'marginTotal',   label: 'Potential ISK',        fmt: r => Math.round(r.marginTotal).toLocaleString(), cls: 'margin-pos' },
+  { key: 'm3',            label: 'm³/unit',              fmt: r => r.m3 != null ? r.m3.toLocaleString(undefined,{maximumFractionDigits:2}) : '…' },
+  { key: 'iskPerM3',      label: 'ISK/m³',               fmt: r => r.iskPerM3 != null ? Math.round(r.iskPerM3).toLocaleString() : (r.m3 != null ? '—' : '…'), cls: 'margin-pos' },
+  { key: 'dailyVolume',   label: 'Avg daily vol (dest)', fmt: r => r.dailyVolume != null ? Math.round(r.dailyVolume).toLocaleString() : '…' },
+  { key: 'pctOfDailyVol', label: '% of daily vol',       fmt: r => r.pctOfDailyVol != null ? r.pctOfDailyVol.toFixed(1) + '%' : (r.dailyVolume != null ? '—' : '…') },
+];
+
+let visibleCols = new Set(COLUMNS.map(c => c.key));
+let colPanelOpen = false;
 let currentRows = [];
 let sortKey = 'marginTotal';
 let sortDir = -1;
+
+function numOrMin(v) {
+  return (v === null || v === undefined || Number.isNaN(v)) ? -Infinity : v;
+}
+
+function renderColumnToggles() {
+  return `
+    <details class="col-toggle" ${colPanelOpen ? 'open' : ''}>
+      <summary>Columns</summary>
+      <div class="col-toggle-grid">
+        ${COLUMNS.map(c => `
+          <label class="opt"><input type="checkbox" data-col="${c.key}" ${visibleCols.has(c.key) ? 'checked' : ''}> ${c.label}</label>
+        `).join('')}
+      </div>
+    </details>
+  `;
+}
 
 function renderTable() {
   if (!currentRows.length) {
     resultsEl.innerHTML = `<div class="empty">No profitable overlap found between these two stations right now.</div>`;
     return;
   }
-  const rows = [...currentRows].sort((a, b) => (a[sortKey] - b[sortKey]) * sortDir);
+  const cols = COLUMNS.filter(c => visibleCols.has(c.key));
+  const rows = [...currentRows].sort((a, b) => (numOrMin(a[sortKey]) - numOrMin(b[sortKey])) * sortDir);
+
   resultsEl.innerHTML = `
+    <div class="panel" style="padding:0.75rem 0.9rem;">
+      ${renderColumnToggles()}
+    </div>
     <div class="panel" style="padding:0; overflow-x:auto;">
       <table>
         <thead>
           <tr>
             <th data-k="name">Item</th>
-            <th data-k="buyPrice" class="num">Buy @ origin</th>
-            <th data-k="sellPrice" class="num">Sell @ dest</th>
-            <th data-k="marginUnit" class="num">Margin/unit</th>
-            <th data-k="marginPct" class="num">%</th>
-            <th data-k="volume" class="num">Units avail.</th>
-            <th data-k="marginTotal" class="num">Potential ISK</th>
+            ${cols.map(c => `<th data-k="${c.key}" class="num">${c.label}</th>`).join('')}
           </tr>
         </thead>
         <tbody>
           ${rows.slice(0, 60).map(r => `
             <tr>
               <td class="item-name">${r.name}${r.npcFlag ? '<span class="npc-tag">NPC</span>' : ''}</td>
-              <td class="num">${r.buyPrice.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
-              <td class="num">${r.sellPrice.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
-              <td class="num margin-pos">${r.marginUnit.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
-              <td class="num margin-pos">${r.marginPct.toFixed(1)}%</td>
-              <td class="num">${r.volume.toLocaleString()}</td>
-              <td class="num margin-pos">${Math.round(r.marginTotal).toLocaleString()}</td>
+              ${cols.map(c => `<td class="num ${c.cls || ''}">${c.fmt(r)}</td>`).join('')}
             </tr>
           `).join('')}
         </tbody>
       </table>
     </div>
   `;
+
   resultsEl.querySelectorAll('th[data-k]').forEach(th => {
     th.addEventListener('click', () => {
       const k = th.dataset.k;
       if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = -1; }
+      renderTable();
+    });
+  });
+
+  const detailsEl = resultsEl.querySelector('.col-toggle');
+  if (detailsEl) {
+    detailsEl.addEventListener('toggle', () => { colPanelOpen = detailsEl.open; });
+  }
+  resultsEl.querySelectorAll('input[data-col]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) visibleCols.add(cb.dataset.col); else visibleCols.delete(cb.dataset.col);
       renderTable();
     });
   });
@@ -424,14 +524,14 @@ async function scan() {
     for (const o of originStationOrders) {
       if (excludeNpc && isNpcOrder(o)) continue;
       const cur = bestSell[o.type_id];
-      if (!cur || o.price < cur.price) bestSell[o.type_id] = { price: o.price, volume: o.volume_remain, npc: isNpcOrder(o) };
+      if (!cur || o.price < cur.price) bestSell[o.type_id] = { price: o.price, qty: o.volume_remain, npc: isNpcOrder(o) };
     }
     // best (highest) buy price per type at dest
     const bestBuy = {};
     for (const o of destStationOrders) {
       if (excludeNpc && isNpcOrder(o)) continue;
       const cur = bestBuy[o.type_id];
-      if (!cur || o.price > cur.price) bestBuy[o.type_id] = { price: o.price, volume: o.volume_remain, npc: isNpcOrder(o) };
+      if (!cur || o.price > cur.price) bestBuy[o.type_id] = { price: o.price, qty: o.volume_remain, npc: isNpcOrder(o) };
     }
 
     setStatus('Resolving item names…');
@@ -441,7 +541,7 @@ async function scan() {
     currentRows = overlapIds.map(id => {
       const s = bestSell[id], b = bestBuy[id];
       const marginUnit = b.price - s.price;
-      const volume = Math.min(s.volume, b.volume);
+      const unitsAvail = Math.min(s.qty, b.qty);
       return {
         type_id: id,
         name: names[id] || `Type ${id}`,
@@ -449,11 +549,32 @@ async function scan() {
         sellPrice: b.price,
         marginUnit,
         marginPct: (marginUnit / s.price) * 100,
-        volume,
-        marginTotal: marginUnit * volume,
+        unitsAvail,
+        marginTotal: marginUnit * unitsAvail,
         npcFlag: s.npc || b.npc,
+        m3: null,
+        iskPerM3: null,
+        dailyVolume: null,
+        pctOfDailyVol: null,
       };
     }).filter(r => r.marginUnit > 0);
+
+    setStatus(`${currentRows.length} profitable items found. Loading cargo volumes & liquidity…`);
+    renderTable();
+
+    // enrichment pass - m3 (static) and avg daily volume (region history), batched to be polite to ESI
+    const ids = currentRows.map(r => r.type_id);
+    const [m3Results, dailyVolResults] = await Promise.all([
+      fetchInBatches(ids, 25, tid => getTypeVolume(tid)),
+      fetchInBatches(ids, 25, tid => getAvgDailyVolume(dest.region_id, tid)),
+    ]);
+
+    currentRows.forEach((r, i) => {
+      r.m3 = m3Results[i];
+      r.iskPerM3 = (typeof r.m3 === 'number' && r.m3 > 0) ? r.marginUnit / r.m3 : null;
+      r.dailyVolume = dailyVolResults[i];
+      r.pctOfDailyVol = (typeof r.dailyVolume === 'number' && r.dailyVolume > 0) ? (r.unitsAvail / r.dailyVolume) * 100 : null;
+    });
 
     setStatus(`Done — ${currentRows.length} profitable items found across ${routeInfo.jumps} jumps.`);
     renderTable();
