@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Haul Margin — Trade Route Scanner</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0b0e13">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0b0e13;
+    --panel:#12161f;
+    --panel-raised:#171d29;
+    --line:#232a38;
+    --text:#d7e0e8;
+    --muted:#6b7a8a;
+    --cyan:#5fd8e0;
+    --cyan-dim:#2c5459;
+    --green:#59d97a;
+    --amber:#e8a33d;
+    --red:#e5544f;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    background:
+      radial-gradient(1200px 600px at 80% -10%, #101827 0%, transparent 60%),
+      var(--bg);
+    color:var(--text);
+    font-family:'Inter', sans-serif;
+    min-height:100vh;
+    padding-bottom:3rem;
+  }
+  .wrap{max-width:920px; margin:0 auto; padding:1.25rem 1rem 2rem;}
+
+  header{
+    display:flex; align-items:baseline; justify-content:space-between;
+    padding:0.75rem 0 1.25rem;
+    border-bottom:1px solid var(--line);
+    margin-bottom:1.5rem;
+  }
+  .brand{font-family:'Rajdhani',sans-serif; font-weight:700; font-size:1.4rem; letter-spacing:0.04em; color:var(--text);}
+  .brand span{color:var(--cyan);}
+  .tagline{font-size:0.7rem; color:var(--muted); letter-spacing:0.08em; text-transform:uppercase; margin-top:0.15rem;}
+
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:1.1rem;
+    margin-bottom:1rem;
+  }
+  .row{display:flex; gap:0.75rem; flex-wrap:wrap;}
+  .field{flex:1; min-width:140px;}
+  label{
+    display:block; font-size:0.68rem; letter-spacing:0.08em; text-transform:uppercase;
+    color:var(--muted); margin-bottom:0.35rem; font-family:'JetBrains Mono',monospace;
+  }
+  select, input{
+    width:100%;
+    background:var(--panel-raised);
+    border:1px solid var(--line);
+    color:var(--text);
+    padding:0.6rem 0.65rem;
+    border-radius:6px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:0.85rem;
+  }
+  select:focus, input:focus, button:focus-visible{
+    outline:2px solid var(--cyan); outline-offset:1px;
+  }
+  .swap-btn{
+    align-self:flex-end;
+    background:var(--panel-raised);
+    border:1px solid var(--line);
+    color:var(--cyan);
+    border-radius:6px;
+    width:2.6rem; height:2.6rem;
+    font-size:1rem;
+    cursor:pointer;
+    flex:0 0 auto;
+  }
+  .swap-btn:hover{border-color:var(--cyan);}
+
+  .options-row{display:flex; gap:1.25rem; flex-wrap:wrap; margin-top:0.9rem; font-size:0.8rem;}
+  .opt{display:flex; align-items:center; gap:0.4rem; color:var(--muted);}
+  .opt input{width:auto;}
+
+  .scan-btn{
+    margin-top:1rem;
+    width:100%;
+    background:linear-gradient(180deg, var(--cyan), #35a9b0);
+    color:#04181a;
+    border:none;
+    font-family:'Rajdhani',sans-serif;
+    font-weight:700;
+    font-size:1rem;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    padding:0.75rem;
+    border-radius:7px;
+    cursor:pointer;
+  }
+  .scan-btn:disabled{opacity:0.5; cursor:wait;}
+  .scan-btn:hover:not(:disabled){filter:brightness(1.08);}
+
+  .status-line{
+    font-family:'JetBrains Mono',monospace; font-size:0.78rem; color:var(--muted);
+    margin:0.85rem 0; min-height:1.1rem;
+  }
+  .status-line.err{color:var(--red);}
+
+  /* route strip - signature element */
+  .route-strip{
+    display:flex; align-items:center; gap:2px; margin:0.9rem 0 0.4rem;
+    padding:0.7rem; background:var(--panel-raised); border-radius:7px; border:1px solid var(--line);
+    overflow-x:auto;
+  }
+  .pip{
+    width:9px; height:9px; border-radius:50%; flex:0 0 auto;
+  }
+  .pip.hs{background:var(--green);}
+  .pip.ls{background:var(--amber);}
+  .pip.ns{background:var(--red);}
+  .route-meta{display:flex; justify-content:space-between; font-size:0.72rem; color:var(--muted); font-family:'JetBrains Mono',monospace; margin-bottom:0.75rem;}
+  .route-meta b{color:var(--text); font-weight:600;}
+
+  table{width:100%; border-collapse:collapse; font-size:0.82rem;}
+  thead th{
+    text-align:left; font-family:'JetBrains Mono',monospace; font-size:0.65rem;
+    letter-spacing:0.06em; text-transform:uppercase; color:var(--muted);
+    padding:0.5rem 0.5rem; border-bottom:1px solid var(--line);
+    cursor:pointer; user-select:none; white-space:nowrap;
+  }
+  thead th:hover{color:var(--cyan);}
+  tbody td{padding:0.55rem 0.5rem; border-bottom:1px solid var(--line); white-space:nowrap;}
+  tbody tr:hover{background:var(--panel-raised);}
+  .item-name{color:var(--text); font-weight:500; max-width:220px; overflow:hidden; text-overflow:ellipsis;}
+  .num{font-family:'JetBrains Mono',monospace; text-align:right;}
+  .margin-pos{color:var(--green);}
+  .npc-tag{
+    font-size:0.6rem; color:var(--amber); border:1px solid var(--amber);
+    border-radius:3px; padding:0 0.3rem; margin-left:0.4rem; vertical-align:middle;
+  }
+
+  .empty{
+    text-align:center; color:var(--muted); font-size:0.85rem; padding:2.5rem 1rem;
+    font-family:'JetBrains Mono',monospace;
+  }
+
+  footer{
+    text-align:center; color:var(--muted); font-size:0.68rem; margin-top:2rem;
+    font-family:'JetBrains Mono',monospace; line-height:1.6;
+  }
+
+  @media (max-width:520px){
+    .item-name{max-width:120px;}
+    table{font-size:0.74rem;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <div class="brand">HAUL<span>MARGIN</span></div>
+      <div class="tagline">Station-to-station arbitrage scanner</div>
+    </div>
+  </header>
+
+  <div class="panel">
+    <div class="row">
+      <div class="field">
+        <label for="origin">Buy at (origin)</label>
+        <select id="origin"></select>
+      </div>
+      <button class="swap-btn" id="swap" title="Swap origin/destination" aria-label="Swap origin and destination">⇄</button>
+      <div class="field">
+        <label for="dest">Sell at (destination)</label>
+        <select id="dest"></select>
+      </div>
+    </div>
+
+    <div class="options-row">
+      <label class="opt"><input type="checkbox" id="excludeNpc" checked> Exclude NPC orders (~365d duration)</label>
+      <label class="opt"><input type="checkbox" id="avoidNull" checked> Avoid null-sec route legs when possible</label>
+    </div>
+
+    <button class="scan-btn" id="scan">Scan market</button>
+    <div class="status-line" id="status"></div>
+  </div>
+
+  <div id="routePanel"></div>
+  <div id="results"></div>
+
+  <footer>
+    Data via EVE ESI (esi.evetech.net) · Public market endpoints, no login required<br>
+    Prices reflect the moment you scan — always double-check before undocking.
+  </footer>
+
+</div>
+
+<script>
+const ESI = 'https://esi.evetech.net/latest';
+
+// Five major NPC trade hubs
+const HUBS = {
+  jita:    { name: 'Jita IV-4 (Caldari Navy Assembly Plant)', station_id: 60003760, system_id: 30000142, region_id: 10000002 },
+  amarr:   { name: 'Amarr VIII (Emperor Family Academy)',     station_id: 60008494, system_id: 30002187, region_id: 10000043 },
+  dodixie: { name: 'Dodixie IX (Federation Navy Assembly)',   station_id: 60011866, system_id: 30002659, region_id: 10000032 },
+  rens:    { name: 'Rens VI (Brutor Tribe Treasury)',         station_id: 60004588, system_id: 30002510, region_id: 10000030 },
+  hek:     { name: 'Hek VIII (Boundless Creation Factory)',   station_id: 60005686, system_id: 30002053, region_id: 10000042 },
+};
+
+const originSel = document.getElementById('origin');
+const destSel = document.getElementById('dest');
+const statusEl = document.getElementById('status');
+const scanBtn = document.getElementById('scan');
+const routePanel = document.getElementById('routePanel');
+const resultsEl = document.getElementById('results');
+
+for (const [key, hub] of Object.entries(HUBS)) {
+  const o = new Option(hub.name, key);
+  const d = new Option(hub.name, key);
+  originSel.add(o);
+  destSel.add(d);
+}
+originSel.value = 'jita';
+destSel.value = 'amarr';
+
+document.getElementById('swap').addEventListener('click', () => {
+  const a = originSel.value;
+  originSel.value = destSel.value;
+  destSel.value = a;
+});
+
+function setStatus(msg, isErr=false) {
+  statusEl.textContent = msg;
+  statusEl.className = 'status-line' + (isErr ? ' err' : '');
+}
+
+async function fetchAllPages(url) {
+  const first = await fetch(url + (url.includes('?') ? '&' : '?') + 'page=1');
+  if (!first.ok) throw new Error(`ESI error ${first.status} on ${url}`);
+  let data = await first.json();
+  const pages = parseInt(first.headers.get('x-pages') || '1', 10);
+  const calls = [];
+  for (let p = 2; p <= pages; p++) {
+    calls.push(fetch(url + (url.includes('?') ? '&' : '?') + `page=${p}`).then(r => r.json()));
+  }
+  const rest = await Promise.all(calls);
+  for (const r of rest) data = data.concat(r);
+  return data;
+}
+
+async function resolveNames(typeIds) {
+  const names = {};
+  const ids = [...typeIds];
+  for (let i = 0; i < ids.length; i += 1000) {
+    const chunk = ids.slice(i, i + 1000);
+    const resp = await fetch(`${ESI}/universe/names/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(chunk)
+    });
+    if (!resp.ok) continue;
+    const data = await resp.json();
+    for (const d of data) names[d.id] = d.name;
+  }
+  return names;
+}
+
+const routeCache = {};
+async function getRouteInfo(originSystem, destSystem, avoidNull) {
+  const key = `${originSystem}-${destSystem}-${avoidNull}`;
+  if (routeCache[key]) return routeCache[key];
+
+  const flag = avoidNull ? 'secure' : 'shortest';
+  let systemIds;
+  try {
+    const resp = await fetch(`${ESI}/route/${originSystem}/${destSystem}/?flag=${flag}`);
+    if (!resp.ok) throw new Error('route fetch failed');
+    systemIds = await resp.json();
+  } catch (e) {
+    // fall back to shortest if secure-only route is impossible
+    const resp2 = await fetch(`${ESI}/route/${originSystem}/${destSystem}/?flag=shortest`);
+    systemIds = await resp2.json();
+  }
+
+  const secResults = await Promise.all(systemIds.map(id =>
+    fetch(`${ESI}/universe/systems/${id}/`).then(r => r.json()).catch(() => ({ security_status: null }))
+  ));
+
+  const legs = secResults.map((s, i) => ({
+    system_id: systemIds[i],
+    name: s.name || '?',
+    sec: typeof s.security_status === 'number' ? s.security_status : null,
+  }));
+
+  const info = {
+    jumps: systemIds.length - 1,
+    legs,
+    minSec: Math.min(...legs.map(l => l.sec ?? 1)),
+    hasNull: legs.some(l => l.sec !== null && l.sec < 0.05),
+    hasLow: legs.some(l => l.sec !== null && l.sec >= 0.05 && l.sec < 0.45),
+  };
+  routeCache[key] = info;
+  return info;
+}
+
+function secClass(sec) {
+  if (sec === null) return 'hs';
+  if (sec < 0.05) return 'ns';
+  if (sec < 0.45) return 'ls';
+  return 'hs';
+}
+
+function renderRoute(info) {
+  const pips = info.legs.map(l => `<div class="pip ${secClass(l.sec)}" title="${l.name} (${l.sec !== null ? l.sec.toFixed(1) : '?'})"></div>`).join('');
+  const riskLabel = info.hasNull ? 'Route crosses NULL-SEC' : info.hasLow ? 'Route crosses LOW-SEC' : 'High-sec only';
+  const riskColor = info.hasNull ? 'var(--red)' : info.hasLow ? 'var(--amber)' : 'var(--green)';
+  routePanel.innerHTML = `
+    <div class="panel" style="padding-top:0.85rem;">
+      <div class="route-meta">
+        <span><b>${info.jumps}</b> jumps</span>
+        <span style="color:${riskColor}"><b>${riskLabel}</b></span>
+        <span>lowest sec: <b>${info.minSec.toFixed(1)}</b></span>
+      </div>
+      <div class="route-strip">${pips}</div>
+    </div>
+  `;
+}
+
+function isNpcOrder(order) {
+  const issued = new Date(order.issued);
+  const now = new Date();
+  const daysRemaining = order.duration - Math.floor((now - issued) / 86400000);
+  return order.duration >= 364;
+}
+
+let currentRows = [];
+let sortKey = 'marginTotal';
+let sortDir = -1;
+
+function renderTable() {
+  if (!currentRows.length) {
+    resultsEl.innerHTML = `<div class="empty">No profitable overlap found between these two stations right now.</div>`;
+    return;
+  }
+  const rows = [...currentRows].sort((a, b) => (a[sortKey] - b[sortKey]) * sortDir);
+  resultsEl.innerHTML = `
+    <div class="panel" style="padding:0; overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th data-k="name">Item</th>
+            <th data-k="buyPrice" class="num">Buy @ origin</th>
+            <th data-k="sellPrice" class="num">Sell @ dest</th>
+            <th data-k="marginUnit" class="num">Margin/unit</th>
+            <th data-k="marginPct" class="num">%</th>
+            <th data-k="volume" class="num">Units avail.</th>
+            <th data-k="marginTotal" class="num">Potential ISK</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.slice(0, 60).map(r => `
+            <tr>
+              <td class="item-name">${r.name}${r.npcFlag ? '<span class="npc-tag">NPC</span>' : ''}</td>
+              <td class="num">${r.buyPrice.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+              <td class="num">${r.sellPrice.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+              <td class="num margin-pos">${r.marginUnit.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+              <td class="num margin-pos">${r.marginPct.toFixed(1)}%</td>
+              <td class="num">${r.volume.toLocaleString()}</td>
+              <td class="num margin-pos">${Math.round(r.marginTotal).toLocaleString()}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+  resultsEl.querySelectorAll('th[data-k]').forEach(th => {
+    th.addEventListener('click', () => {
+      const k = th.dataset.k;
+      if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = -1; }
+      renderTable();
+    });
+  });
+}
+
+async function scan() {
+  const originKey = originSel.value;
+  const destKey = destSel.value;
+  if (originKey === destKey) {
+    setStatus('Pick two different stations.', true);
+    return;
+  }
+  const origin = HUBS[originKey];
+  const dest = HUBS[destKey];
+  const excludeNpc = document.getElementById('excludeNpc').checked;
+  const avoidNull = document.getElementById('avoidNull').checked;
+
+  scanBtn.disabled = true;
+  resultsEl.innerHTML = '';
+  routePanel.innerHTML = '';
+
+  try {
+    setStatus('Fetching route & security data…');
+    const routeInfo = await getRouteInfo(origin.system_id, dest.system_id, avoidNull);
+    renderRoute(routeInfo);
+
+    setStatus(`Pulling sell orders at ${origin.name.split(' (')[0]}…`);
+    const originOrders = await fetchAllPages(`${ESI}/markets/${origin.region_id}/orders/?order_type=sell`);
+    const originStationOrders = originOrders.filter(o => o.location_id === origin.station_id);
+
+    setStatus(`Pulling buy orders at ${dest.name.split(' (')[0]}…`);
+    const destOrders = await fetchAllPages(`${ESI}/markets/${dest.region_id}/orders/?order_type=buy`);
+    const destStationOrders = destOrders.filter(o => o.location_id === dest.station_id);
+
+    // best (lowest) sell price per type at origin
+    const bestSell = {};
+    for (const o of originStationOrders) {
+      if (excludeNpc && isNpcOrder(o)) continue;
+      const cur = bestSell[o.type_id];
+      if (!cur || o.price < cur.price) bestSell[o.type_id] = { price: o.price, volume: o.volume_remain, npc: isNpcOrder(o) };
+    }
+    // best (highest) buy price per type at dest
+    const bestBuy = {};
+    for (const o of destStationOrders) {
+      if (excludeNpc && isNpcOrder(o)) continue;
+      const cur = bestBuy[o.type_id];
+      if (!cur || o.price > cur.price) bestBuy[o.type_id] = { price: o.price, volume: o.volume_remain, npc: isNpcOrder(o) };
+    }
+
+    setStatus('Resolving item names…');
+    const overlapIds = Object.keys(bestSell).filter(id => bestBuy[id] && bestBuy[id].price > bestSell[id].price);
+    const names = await resolveNames(overlapIds.map(Number));
+
+    currentRows = overlapIds.map(id => {
+      const s = bestSell[id], b = bestBuy[id];
+      const marginUnit = b.price - s.price;
+      const volume = Math.min(s.volume, b.volume);
+      return {
+        type_id: id,
+        name: names[id] || `Type ${id}`,
+        buyPrice: s.price,
+        sellPrice: b.price,
+        marginUnit,
+        marginPct: (marginUnit / s.price) * 100,
+        volume,
+        marginTotal: marginUnit * volume,
+        npcFlag: s.npc || b.npc,
+      };
+    }).filter(r => r.marginUnit > 0);
+
+    setStatus(`Done — ${currentRows.length} profitable items found across ${routeInfo.jumps} jumps.`);
+    renderTable();
+  } catch (err) {
+    console.error(err);
+    setStatus('Something went wrong talking to ESI: ' + err.message, true);
+  } finally {
+    scanBtn.disabled = false;
+  }
+}
+
+scanBtn.addEventListener('click', scan);
+
+// Register service worker for offline app-shell caching
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('service-worker.js').catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
