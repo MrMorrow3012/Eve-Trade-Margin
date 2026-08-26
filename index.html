@@ -161,6 +161,7 @@
   .haul-summary-row b{color:var(--green); font-weight:600;}
 
   table{width:100%; border-collapse:collapse; font-size:0.82rem;}
+  .results-table{table-layout:fixed;}
   thead th{
     text-align:left; font-family:'JetBrains Mono',monospace; font-size:0.65rem;
     letter-spacing:0.06em; text-transform:uppercase; color:var(--muted);
@@ -440,16 +441,16 @@ function isNpcOrder(order) {
 
 // Column registry drives both the table and the show/hide toggle panel.
 const COLUMNS = [
-  { key: 'buyPrice',      label: 'Buy @ origin',    fmt: r => r.buyPrice.toLocaleString(undefined,{maximumFractionDigits:2}) },
-  { key: 'sellPrice',     label: 'Sell @ dest',      fmt: r => r.sellPrice.toLocaleString(undefined,{maximumFractionDigits:2}) },
-  { key: 'marginUnit',    label: 'Margin/unit',      fmt: r => r.marginUnit.toLocaleString(undefined,{maximumFractionDigits:2}), cls: 'margin-pos' },
-  { key: 'marginPct',     label: '%',                fmt: r => r.marginPct.toFixed(1) + '%', cls: 'margin-pos' },
-  { key: 'unitsAvail',    label: 'Units avail.',     fmt: r => r.unitsAvail.toLocaleString() },
-  { key: 'marginTotal',   label: 'Potential ISK',    fmt: r => Math.round(r.marginTotal).toLocaleString(), cls: 'margin-pos' },
-  { key: 'm3',            label: 'm³/unit',          fmt: r => r.m3 != null ? r.m3.toLocaleString(undefined,{maximumFractionDigits:2}) : '…' },
-  { key: 'iskPerM3',      label: 'ISK/m³',           fmt: r => r.iskPerM3 != null ? Math.round(r.iskPerM3).toLocaleString() : (r.m3 != null ? '—' : '…'), cls: 'margin-pos' },
-  { key: 'dailyVolume',   label: 'Daily vol (30d)',  fmt: r => r.dailyVolume != null ? Math.round(r.dailyVolume).toLocaleString() : '…' },
-  { key: 'pctOfDailyVol', label: 'Liquidity %',      fmt: r => r.pctOfDailyVol != null ? r.pctOfDailyVol.toFixed(1) + '%' : (r.dailyVolume != null ? '—' : '…') },
+  { key: 'buyPrice',      label: 'Buy @ origin',    width: 105, fmt: r => r.buyPrice.toLocaleString(undefined,{maximumFractionDigits:2}) },
+  { key: 'sellPrice',     label: 'Sell @ dest',      width: 105, fmt: r => r.sellPrice.toLocaleString(undefined,{maximumFractionDigits:2}) },
+  { key: 'marginUnit',    label: 'Margin/unit',      width: 100, fmt: r => r.marginUnit.toLocaleString(undefined,{maximumFractionDigits:2}), cls: 'margin-pos' },
+  { key: 'marginPct',     label: '%',                width: 65,  fmt: r => r.marginPct.toFixed(1) + '%', cls: 'margin-pos' },
+  { key: 'unitsAvail',    label: 'Units avail.',     width: 85,  fmt: r => r.unitsAvail.toLocaleString() },
+  { key: 'marginTotal',   label: 'Potential ISK',    width: 110, fmt: r => Math.round(r.marginTotal).toLocaleString(), cls: 'margin-pos' },
+  { key: 'm3',            label: 'm³/unit',          width: 75,  fmt: r => r.m3 != null ? r.m3.toLocaleString(undefined,{maximumFractionDigits:2}) : '…' },
+  { key: 'iskPerM3',      label: 'ISK/m³',           width: 90,  fmt: r => r.iskPerM3 != null ? Math.round(r.iskPerM3).toLocaleString() : (r.m3 != null ? '—' : '…'), cls: 'margin-pos' },
+  { key: 'dailyVolume',   label: 'Daily vol (30d)',  width: 100, fmt: r => r.dailyVolume != null ? Math.round(r.dailyVolume).toLocaleString() : '…' },
+  { key: 'pctOfDailyVol', label: 'Liquidity %',      width: 70,  fmt: r => r.pctOfDailyVol != null ? r.pctOfDailyVol.toFixed(1) + '%' : (r.dailyVolume != null ? '—' : '…') },
 ];
 
 let visibleCols = new Set(COLUMNS.map(c => c.key));
@@ -493,7 +494,11 @@ function renderTable() {
       ${renderColumnToggles()}
     </div>
     <div class="panel table-scroll" style="padding:0; overflow-x:auto;">
-      <table>
+      <table class="results-table">
+        <colgroup>
+          <col>
+          ${cols.map(c => `<col style="width:${c.width}px">`).join('')}
+        </colgroup>
         <thead>
           <tr>
             <th data-k="name">Item</th>
