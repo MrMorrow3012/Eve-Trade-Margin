@@ -33,7 +33,7 @@
     min-height:100vh;
     padding-bottom:3rem;
   }
-  .wrap{margin:0 auto; padding:1.25rem 15px 2rem;}
+  .wrap{max-width:85%; margin:0 auto; padding:1.25rem 15px 2rem;}
 
   header{
     display:flex; align-items:baseline; justify-content:space-between;
@@ -171,7 +171,7 @@
   thead th:hover{color:var(--cyan);}
   tbody td{padding:0.5rem 0.45rem; border-bottom:1px solid var(--line); white-space:nowrap;}
   tbody tr:hover{background:var(--panel-raised);}
-  .item-name{color:var(--text); font-weight:500; max-width:230px; overflow:hidden; text-overflow:ellipsis;}
+  .item-name{color:var(--text); font-weight:500; max-width:380px; overflow:hidden; text-overflow:ellipsis;}
   .num{font-family:'JetBrains Mono',monospace; text-align:right;}
   .margin-pos{color:var(--green);}
   .npc-tag{
@@ -190,7 +190,7 @@
   }
 
   @media (max-width:520px){
-    .wrap{padding-left:0.5rem; padding-right:0.5rem;}
+    .wrap{max-width:none; padding-left:0.5rem; padding-right:0.5rem;}
     .item-name{max-width:110px;}
     table{font-size:0.72rem;}
     thead th, tbody td{padding-left:0.35rem; padding-right:0.35rem;}
@@ -439,16 +439,29 @@ function isNpcOrder(order) {
   return order.duration >= 364;
 }
 
+// Compact ISK display: 1,234,567 -> 1.23M. The exact figure is still available via
+// the cell's title attribute (hover on desktop) so nothing is actually lost, just condensed.
+function formatIsk(value) {
+  const abs = Math.abs(value);
+  if (abs >= 1e9) return (value / 1e9).toFixed(2) + 'B';
+  if (abs >= 1e6) return (value / 1e6).toFixed(2) + 'M';
+  if (abs >= 1e3) return (value / 1e3).toFixed(1) + 'K';
+  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+function exactIsk(value) {
+  return Math.round(value).toLocaleString() + ' ISK';
+}
+
 // Column registry drives both the table and the show/hide toggle panel.
 const COLUMNS = [
-  { key: 'buyPrice',      label: 'Buy @ origin',    width: 120, fmt: r => r.buyPrice.toLocaleString(undefined,{maximumFractionDigits:2}) },
-  { key: 'sellPrice',     label: 'Sell @ dest',      width: 110, fmt: r => r.sellPrice.toLocaleString(undefined,{maximumFractionDigits:2}) },
-  { key: 'marginUnit',    label: 'Margin/unit',      width: 110, fmt: r => r.marginUnit.toLocaleString(undefined,{maximumFractionDigits:2}), cls: 'margin-pos' },
-  { key: 'marginPct',     label: '%',                width: 85,  fmt: r => r.marginPct.toFixed(1) + '%', cls: 'margin-pos' },
+  { key: 'buyPrice',      label: 'Buy @ origin',    width: 80,  fmt: r => formatIsk(r.buyPrice), titleFmt: r => exactIsk(r.buyPrice) },
+  { key: 'sellPrice',     label: 'Sell @ dest',      width: 80,  fmt: r => formatIsk(r.sellPrice), titleFmt: r => exactIsk(r.sellPrice) },
+  { key: 'marginUnit',    label: 'Margin/unit',      width: 80,  fmt: r => formatIsk(r.marginUnit), titleFmt: r => exactIsk(r.marginUnit), cls: 'margin-pos' },
+  { key: 'marginPct',     label: '%',                width: 65,  fmt: r => r.marginPct.toFixed(1) + '%', cls: 'margin-pos' },
   { key: 'unitsAvail',    label: 'Units avail.',     width: 120, fmt: r => r.unitsAvail.toLocaleString() },
-  { key: 'marginTotal',   label: 'Potential ISK',    width: 130, fmt: r => Math.round(r.marginTotal).toLocaleString(), cls: 'margin-pos' },
+  { key: 'marginTotal',   label: 'Potential ISK',    width: 80,  fmt: r => formatIsk(r.marginTotal), titleFmt: r => exactIsk(r.marginTotal), cls: 'margin-pos' },
   { key: 'm3',            label: 'm³/unit',          width: 80,  fmt: r => r.m3 != null ? r.m3.toLocaleString(undefined,{maximumFractionDigits:2}) : '…' },
-  { key: 'iskPerM3',      label: 'ISK/m³',           width: 95,  fmt: r => r.iskPerM3 != null ? Math.round(r.iskPerM3).toLocaleString() : (r.m3 != null ? '—' : '…'), cls: 'margin-pos' },
+  { key: 'iskPerM3',      label: 'ISK/m³',           width: 80,  fmt: r => r.iskPerM3 != null ? formatIsk(r.iskPerM3) : (r.m3 != null ? '—' : '…'), titleFmt: r => r.iskPerM3 != null ? exactIsk(r.iskPerM3) + '/m³' : '', cls: 'margin-pos' },
   { key: 'dailyVolume',   label: 'Daily vol',        width: 95,  fmt: r => r.dailyVolume != null ? Math.round(r.dailyVolume).toLocaleString() : '…' },
   { key: 'pctOfDailyVol', label: 'Liquidity %',      width: 110, fmt: r => r.pctOfDailyVol != null ? r.pctOfDailyVol.toFixed(1) + '%' : (r.dailyVolume != null ? '—' : '…') },
 ];
@@ -496,7 +509,7 @@ function renderTable() {
     <div class="panel table-scroll" style="padding:0; overflow-x:auto;">
       <table class="results-table">
         <colgroup>
-          <col style="width:230px">
+          <col style="width:380px">
           ${cols.map(c => `<col style="width:${c.width}px">`).join('')}
         </colgroup>
         <thead>
@@ -509,7 +522,7 @@ function renderTable() {
           ${rows.slice(0, 60).map(r => `
             <tr>
               <td class="item-name">${r.name}${r.npcFlag ? '<span class="npc-tag">NPC</span>' : ''}</td>
-              ${cols.map(c => `<td class="num ${c.cls || ''}">${c.fmt(r)}</td>`).join('')}
+              ${cols.map(c => `<td class="num ${c.cls || ''}"${c.titleFmt ? ` title="${c.titleFmt(r)}"` : ''}>${c.fmt(r)}</td>`).join('')}
             </tr>
           `).join('')}
         </tbody>
