@@ -88,6 +88,17 @@
   .opt{display:flex; align-items:center; gap:0.4rem; color:var(--muted);}
   .opt input{width:auto;}
 
+  .tax-row{margin-top:0.9rem;}
+  .tax-row label{
+    font-family:'JetBrains Mono',monospace; font-size:0.72rem; color:var(--muted);
+    text-transform:uppercase; letter-spacing:0.06em; margin-bottom:0.4rem;
+  }
+  .tax-row label span{color:var(--cyan); font-weight:600;}
+  .tax-row input[type="range"]{
+    width:100%; padding:0; height:1.4rem; accent-color:var(--cyan); cursor:pointer;
+    background:transparent;
+  }
+
   .scan-btn{
     margin-top:1rem;
     width:100%;
@@ -122,9 +133,7 @@
   .pip{
     width:9px; height:9px; border-radius:50%; flex:0 0 auto;
   }
-  .pip.hs{background:var(--green);}
-  .pip.ls{background:var(--amber);}
-  .pip.ns{background:var(--red);}
+  .pip{transition:background-color 0.15s;}
   .route-meta{display:flex; justify-content:space-between; font-size:0.72rem; color:var(--muted); font-family:'JetBrains Mono',monospace; margin-bottom:0.75rem;}
   .route-meta b{color:var(--text); font-weight:600;}
 
@@ -161,7 +170,9 @@
   .haul-summary-row b{color:var(--green); font-weight:600;}
 
   table{width:100%; border-collapse:collapse; font-size:0.82rem;}
-  .results-table{table-layout:fixed; width:auto;}
+  .results-table{table-layout:fixed;}
+  .name-col{width:auto; min-width:150px;}
+  @media (max-width:520px){ .name-col{width:110px; min-width:110px;} }
   thead th{
     text-align:left; font-family:'JetBrains Mono',monospace; font-size:0.65rem;
     letter-spacing:0.06em; text-transform:uppercase; color:var(--muted);
@@ -171,7 +182,7 @@
   thead th:hover{color:var(--cyan);}
   tbody td{padding:0.5rem 0.45rem; border-bottom:1px solid var(--line); white-space:nowrap;}
   tbody tr:hover{background:var(--panel-raised);}
-  .item-name{color:var(--text); font-weight:500; max-width:380px; overflow:hidden; text-overflow:ellipsis;}
+  .item-name{color:var(--text); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .num{font-family:'JetBrains Mono',monospace; text-align:right;}
   .margin-pos{color:var(--green);}
   .npc-tag{
@@ -191,7 +202,6 @@
 
   @media (max-width:520px){
     .wrap{max-width:none; padding-left:0.5rem; padding-right:0.5rem;}
-    .item-name{max-width:110px;}
     table{font-size:0.72rem;}
     thead th, tbody td{padding-left:0.35rem; padding-right:0.35rem;}
   }
@@ -223,6 +233,15 @@
     <div class="options-row">
       <label class="opt"><input type="checkbox" id="excludeNpc" checked> Exclude NPC orders (~365d duration)</label>
       <label class="opt"><input type="checkbox" id="avoidNull" checked> Avoid null-sec route legs when possible</label>
+    </div>
+
+    <div class="tax-row">
+      <label for="accountingLevel">Sales tax — <span id="taxLabel">Accounting 0 · 7.50%</span></label>
+      <input type="range" id="accountingLevel" min="0" max="5" step="1" value="0" list="taxTicks">
+      <datalist id="taxTicks">
+        <option value="0"></option><option value="1"></option><option value="2"></option>
+        <option value="3"></option><option value="4"></option><option value="5"></option>
+      </datalist>
     </div>
 
     <button class="scan-btn" id="scan">Scan market</button>
@@ -412,15 +431,30 @@ async function getRouteInfo(originSystem, destSystem, avoidNull) {
   return info;
 }
 
-function secClass(sec) {
-  if (sec === null) return 'hs';
-  if (sec < 0.05) return 'ns';
-  if (sec < 0.45) return 'ls';
-  return 'hs';
+// EVE's actual in-game security-status color table (developers.eveonline.com/docs/guides/system-security)
+const SEC_COLORS = [
+  [1.0, '#2C75E1'], [0.9, '#399AEB'], [0.8, '#4ECEF8'], [0.7, '#60DBA3'],
+  [0.6, '#71E754'], [0.5, '#F5FF83'], [0.4, '#DC6C06'], [0.3, '#CE440F'],
+  [0.2, '#BB1116'], [0.1, '#731F1F'],
+];
+const NULLSEC_COLOR = '#8D3163';
+
+// In-game rounding: 1 decimal place, except (0, 0.05) rounds UP to 0.1 rather than down to
+// 0.0, so anything even slightly positive still reads as low-sec rather than null-sec.
+function roundSecurity(sec) {
+  if (sec === 0) return 0;
+  if (sec > 0 && sec < 0.05) return 0.1;
+  return Math.round(sec * 10) / 10;
+}
+function secColor(sec) {
+  if (sec === null) return 'var(--muted)';
+  const rounded = roundSecurity(sec);
+  for (const [min, color] of SEC_COLORS) if (rounded >= min) return color;
+  return NULLSEC_COLOR;
 }
 
 function renderRoute(info) {
-  const pips = info.legs.map(l => `<div class="pip ${secClass(l.sec)}" title="${l.name} (${l.sec !== null ? l.sec.toFixed(1) : '?'})"></div>`).join('');
+  const pips = info.legs.map(l => `<div class="pip" style="background:${secColor(l.sec)}" title="${l.name} (${l.sec !== null ? roundSecurity(l.sec).toFixed(1) : '?'})"></div>`).join('');
   const riskLabel = info.hasNull ? 'Route crosses NULL-SEC' : info.hasLow ? 'Route crosses LOW-SEC' : 'High-sec only';
   const riskColor = info.hasNull ? 'var(--red)' : info.hasLow ? 'var(--amber)' : 'var(--green)';
   routePanel.innerHTML = `
@@ -428,7 +462,7 @@ function renderRoute(info) {
       <div class="route-meta">
         <span><b>${info.jumps}</b> jumps</span>
         <span style="color:${riskColor}"><b>${riskLabel}</b></span>
-        <span>lowest sec: <b>${info.minSec.toFixed(1)}</b></span>
+        <span>lowest sec: <b>${roundSecurity(info.minSec).toFixed(1)}</b></span>
       </div>
       <div class="route-strip">${pips}</div>
     </div>
@@ -454,12 +488,12 @@ function exactIsk(value) {
 
 // Column registry drives both the table and the show/hide toggle panel.
 const COLUMNS = [
-  { key: 'buyPrice',      label: 'Buy @ origin',    width: 80,  fmt: r => formatIsk(r.buyPrice), titleFmt: r => exactIsk(r.buyPrice) },
-  { key: 'sellPrice',     label: 'Sell @ dest',      width: 80,  fmt: r => formatIsk(r.sellPrice), titleFmt: r => exactIsk(r.sellPrice) },
-  { key: 'marginUnit',    label: 'Margin/unit',      width: 80,  fmt: r => formatIsk(r.marginUnit), titleFmt: r => exactIsk(r.marginUnit), cls: 'margin-pos' },
+  { key: 'buyPrice',      label: 'Buy @ origin',    width: 105, fmt: r => formatIsk(r.buyPrice), titleFmt: r => exactIsk(r.buyPrice) },
+  { key: 'sellPrice',     label: 'Sell @ dest',      width: 100, fmt: r => formatIsk(r.sellPrice), titleFmt: r => exactIsk(r.sellPrice) },
+  { key: 'marginUnit',    label: 'Margin/unit',      width: 100, fmt: r => formatIsk(r.marginUnit), titleFmt: r => exactIsk(r.marginUnit), cls: 'margin-pos' },
   { key: 'marginPct',     label: '%',                width: 65,  fmt: r => r.marginPct.toFixed(1) + '%', cls: 'margin-pos' },
   { key: 'unitsAvail',    label: 'Units avail.',     width: 120, fmt: r => r.unitsAvail.toLocaleString() },
-  { key: 'marginTotal',   label: 'Potential ISK',    width: 80,  fmt: r => formatIsk(r.marginTotal), titleFmt: r => exactIsk(r.marginTotal), cls: 'margin-pos' },
+  { key: 'marginTotal',   label: 'Potential ISK',    width: 115, fmt: r => formatIsk(r.marginTotal), titleFmt: r => exactIsk(r.marginTotal), cls: 'margin-pos' },
   { key: 'm3',            label: 'm³/unit',          width: 80,  fmt: r => r.m3 != null ? r.m3.toLocaleString(undefined,{maximumFractionDigits:2}) : '…' },
   { key: 'iskPerM3',      label: 'ISK/m³',           width: 80,  fmt: r => r.iskPerM3 != null ? formatIsk(r.iskPerM3) : (r.m3 != null ? '—' : '…'), titleFmt: r => r.iskPerM3 != null ? exactIsk(r.iskPerM3) + '/m³' : '', cls: 'margin-pos' },
   { key: 'dailyVolume',   label: 'Daily vol',        width: 95,  fmt: r => r.dailyVolume != null ? Math.round(r.dailyVolume).toLocaleString() : '…' },
@@ -468,9 +502,30 @@ const COLUMNS = [
 
 let visibleCols = new Set(COLUMNS.map(c => c.key));
 let colPanelOpen = false;
-let currentRows = [];
+let allRows = [];      // every profitable-before-tax overlap item from the last scan, tax-independent
+let currentRows = [];  // allRows re-derived at the current tax rate - this is what actually renders
 let sortKey = 'marginTotal';
 let sortDir = -1;
+
+// Sales tax: 7.5% base, reduced 11% (of the base rate) per Accounting skill level, I-V.
+let accountingLevel = 0; // 0-5, persists for the session, resets on reload
+function currentTaxRate() {
+  return 0.075 * (1 - accountingLevel * 0.11);
+}
+function recomputeAndFilter() {
+  const rate = currentTaxRate();
+  currentRows = allRows.map(r => {
+    const netSell = r.sellPrice * (1 - rate);
+    const marginUnit = netSell - r.buyPrice;
+    return {
+      ...r,
+      marginUnit,
+      marginPct: (marginUnit / r.buyPrice) * 100,
+      marginTotal: marginUnit * r.unitsAvail,
+      iskPerM3: (typeof r.m3 === 'number' && r.m3 > 0) ? marginUnit / r.m3 : null,
+    };
+  }).filter(r => r.marginUnit > 0);
+}
 
 function numOrMin(v) {
   return (v === null || v === undefined || Number.isNaN(v)) ? -Infinity : v;
@@ -509,7 +564,7 @@ function renderTable() {
     <div class="panel table-scroll" style="padding:0; overflow-x:auto;">
       <table class="results-table">
         <colgroup>
-          <col style="width:380px">
+          <col class="name-col">
           ${cols.map(c => `<col style="width:${c.width}px">`).join('')}
         </colgroup>
         <thead>
@@ -601,40 +656,37 @@ async function scan() {
     const overlapIds = Object.keys(bestSell).filter(id => bestBuy[id] && bestBuy[id].price > bestSell[id].price);
     const names = await resolveNames(overlapIds.map(Number));
 
-    currentRows = overlapIds.map(id => {
+    allRows = overlapIds.map(id => {
       const s = bestSell[id], b = bestBuy[id];
-      const marginUnit = b.price - s.price;
       const unitsAvail = Math.min(s.qty, b.qty);
       return {
         type_id: id,
         name: names[id] || `Type ${id}`,
         buyPrice: s.price,
         sellPrice: b.price,
-        marginUnit,
-        marginPct: (marginUnit / s.price) * 100,
+        marginUnit: 0, marginPct: 0, marginTotal: 0, // placeholders - recomputeAndFilter() derives these from tax
         unitsAvail,
-        marginTotal: marginUnit * unitsAvail,
         npcFlag: s.npc || b.npc,
         m3: null,
         iskPerM3: null,
         dailyVolume: null,
         pctOfDailyVol: null,
       };
-    }).filter(r => r.marginUnit > 0);
+    }).filter(r => r.sellPrice > r.buyPrice); // raw positivity only - tax can only shrink margin, never create it
 
+    recomputeAndFilter();
     setStatus(`${currentRows.length} profitable items found. Loading cargo volumes & liquidity…`);
     renderTable();
 
     // enrichment pass - m3 (static) and avg daily volume (region history), batched to be polite to ESI
-    const ids = currentRows.map(r => r.type_id);
+    const ids = allRows.map(r => r.type_id);
     const [m3Results, dailyVolResults] = await Promise.all([
       fetchInBatches(ids, 25, tid => getTypeVolume(tid)),
       fetchInBatches(ids, 25, tid => getAvgDailyVolume(dest.region_id, tid)),
     ]);
 
-    currentRows.forEach((r, i) => {
+    allRows.forEach((r, i) => {
       r.m3 = m3Results[i];
-      r.iskPerM3 = (typeof r.m3 === 'number' && r.m3 > 0) ? r.marginUnit / r.m3 : null;
       r.dailyVolume = dailyVolResults[i];
     });
 
@@ -642,15 +694,17 @@ async function scan() {
     // combined daily volume across everything in this result set, capped at 100%. Without
     // the cap (and without pooling against the whole set) a couple of ore types would blow
     // the scale out for every other item, since ore trades in the millions/day.
-    const totalMarketDailyVolume = currentRows.reduce((sum, r) => sum + (typeof r.dailyVolume === 'number' ? r.dailyVolume : 0), 0);
+    const totalMarketDailyVolume = allRows.reduce((sum, r) => sum + (typeof r.dailyVolume === 'number' ? r.dailyVolume : 0), 0);
     const fivePctThreshold = totalMarketDailyVolume * 0.05;
-    currentRows.forEach(r => {
+    allRows.forEach(r => {
       if (typeof r.dailyVolume === 'number' && fivePctThreshold > 0) {
         r.pctOfDailyVol = Math.min(100, (r.dailyVolume / fivePctThreshold) * 100);
       } else {
         r.pctOfDailyVol = null;
       }
     });
+
+    recomputeAndFilter();
 
     setStatus(`Done — ${currentRows.length} profitable items found across ${routeInfo.jumps} jumps.`);
     renderTable();
@@ -663,6 +717,22 @@ async function scan() {
 }
 
 scanBtn.addEventListener('click', scan);
+
+const accountingSlider = document.getElementById('accountingLevel');
+const taxLabel = document.getElementById('taxLabel');
+const ROMAN = ['0', 'I', 'II', 'III', 'IV', 'V'];
+function updateTaxLabel() {
+  taxLabel.textContent = `Accounting ${ROMAN[accountingLevel]} · ${(currentTaxRate() * 100).toFixed(2)}%`;
+}
+accountingSlider.addEventListener('input', () => {
+  accountingLevel = parseInt(accountingSlider.value, 10);
+  updateTaxLabel();
+  if (allRows.length) {
+    recomputeAndFilter();
+    renderTable();
+  }
+});
+updateTaxLabel();
 
 // --- Automatic Hauling Finder ---
 // Greedy bin-pack by ISK/m³: sort candidates by profit density descending, take as many units
