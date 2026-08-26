@@ -161,7 +161,7 @@
   .haul-summary-row b{color:var(--green); font-weight:600;}
 
   table{width:100%; border-collapse:collapse; font-size:0.82rem;}
-  .results-table{table-layout:fixed;}
+  .results-table{table-layout:fixed; width:auto;}
   thead th{
     text-align:left; font-family:'JetBrains Mono',monospace; font-size:0.65rem;
     letter-spacing:0.06em; text-transform:uppercase; color:var(--muted);
@@ -171,7 +171,7 @@
   thead th:hover{color:var(--cyan);}
   tbody td{padding:0.5rem 0.45rem; border-bottom:1px solid var(--line); white-space:nowrap;}
   tbody tr:hover{background:var(--panel-raised);}
-  .item-name{color:var(--text); font-weight:500; max-width:220px; overflow:hidden; text-overflow:ellipsis;}
+  .item-name{color:var(--text); font-weight:500; max-width:230px; overflow:hidden; text-overflow:ellipsis;}
   .num{font-family:'JetBrains Mono',monospace; text-align:right;}
   .margin-pos{color:var(--green);}
   .npc-tag{
@@ -441,16 +441,16 @@ function isNpcOrder(order) {
 
 // Column registry drives both the table and the show/hide toggle panel.
 const COLUMNS = [
-  { key: 'buyPrice',      label: 'Buy @ origin',    width: 105, fmt: r => r.buyPrice.toLocaleString(undefined,{maximumFractionDigits:2}) },
-  { key: 'sellPrice',     label: 'Sell @ dest',      width: 105, fmt: r => r.sellPrice.toLocaleString(undefined,{maximumFractionDigits:2}) },
-  { key: 'marginUnit',    label: 'Margin/unit',      width: 100, fmt: r => r.marginUnit.toLocaleString(undefined,{maximumFractionDigits:2}), cls: 'margin-pos' },
-  { key: 'marginPct',     label: '%',                width: 65,  fmt: r => r.marginPct.toFixed(1) + '%', cls: 'margin-pos' },
-  { key: 'unitsAvail',    label: 'Units avail.',     width: 85,  fmt: r => r.unitsAvail.toLocaleString() },
-  { key: 'marginTotal',   label: 'Potential ISK',    width: 110, fmt: r => Math.round(r.marginTotal).toLocaleString(), cls: 'margin-pos' },
-  { key: 'm3',            label: 'm³/unit',          width: 75,  fmt: r => r.m3 != null ? r.m3.toLocaleString(undefined,{maximumFractionDigits:2}) : '…' },
-  { key: 'iskPerM3',      label: 'ISK/m³',           width: 90,  fmt: r => r.iskPerM3 != null ? Math.round(r.iskPerM3).toLocaleString() : (r.m3 != null ? '—' : '…'), cls: 'margin-pos' },
-  { key: 'dailyVolume',   label: 'Daily vol (30d)',  width: 100, fmt: r => r.dailyVolume != null ? Math.round(r.dailyVolume).toLocaleString() : '…' },
-  { key: 'pctOfDailyVol', label: 'Liquidity %',      width: 70,  fmt: r => r.pctOfDailyVol != null ? r.pctOfDailyVol.toFixed(1) + '%' : (r.dailyVolume != null ? '—' : '…') },
+  { key: 'buyPrice',      label: 'Buy @ origin',    width: 120, fmt: r => r.buyPrice.toLocaleString(undefined,{maximumFractionDigits:2}) },
+  { key: 'sellPrice',     label: 'Sell @ dest',      width: 110, fmt: r => r.sellPrice.toLocaleString(undefined,{maximumFractionDigits:2}) },
+  { key: 'marginUnit',    label: 'Margin/unit',      width: 110, fmt: r => r.marginUnit.toLocaleString(undefined,{maximumFractionDigits:2}), cls: 'margin-pos' },
+  { key: 'marginPct',     label: '%',                width: 85,  fmt: r => r.marginPct.toFixed(1) + '%', cls: 'margin-pos' },
+  { key: 'unitsAvail',    label: 'Units avail.',     width: 120, fmt: r => r.unitsAvail.toLocaleString() },
+  { key: 'marginTotal',   label: 'Potential ISK',    width: 130, fmt: r => Math.round(r.marginTotal).toLocaleString(), cls: 'margin-pos' },
+  { key: 'm3',            label: 'm³/unit',          width: 80,  fmt: r => r.m3 != null ? r.m3.toLocaleString(undefined,{maximumFractionDigits:2}) : '…' },
+  { key: 'iskPerM3',      label: 'ISK/m³',           width: 95,  fmt: r => r.iskPerM3 != null ? Math.round(r.iskPerM3).toLocaleString() : (r.m3 != null ? '—' : '…'), cls: 'margin-pos' },
+  { key: 'dailyVolume',   label: 'Daily vol',        width: 95,  fmt: r => r.dailyVolume != null ? Math.round(r.dailyVolume).toLocaleString() : '…' },
+  { key: 'pctOfDailyVol', label: 'Liquidity %',      width: 110, fmt: r => r.pctOfDailyVol != null ? r.pctOfDailyVol.toFixed(1) + '%' : (r.dailyVolume != null ? '—' : '…') },
 ];
 
 let visibleCols = new Set(COLUMNS.map(c => c.key));
@@ -496,7 +496,7 @@ function renderTable() {
     <div class="panel table-scroll" style="padding:0; overflow-x:auto;">
       <table class="results-table">
         <colgroup>
-          <col>
+          <col style="width:230px">
           ${cols.map(c => `<col style="width:${c.width}px">`).join('')}
         </colgroup>
         <thead>
