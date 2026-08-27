@@ -254,13 +254,17 @@
   <details class="panel haul-finder-panel" id="haulFinderDetails">
     <summary>Automatic Hauling Finder</summary>
     <div class="haul-finder-body">
-      <p class="haul-finder-blurb">Enter your ship's cargo capacity and this fills it with items from your last scan, highest ISK/m³ first, for the most profit that fits in the hold.</p>
+      <p class="haul-finder-blurb">Enter your ship's cargo capacity and this fills it with items from your last scan, highest ISK/m³ first, for the most profit that fits in the hold. Low-liquidity items are excluded below so it doesn't recommend stock that's unlikely to actually sell — this only affects picks here, the main results table above always shows every item.</p>
       <div class="row">
         <div class="field">
           <label for="cargoCapacity">Cargo capacity (m³)</label>
           <input type="number" id="cargoCapacity" placeholder="e.g. 5000" min="0" step="any">
         </div>
         <button class="scan-btn haul-btn" id="findHaul">Find optimal haul</button>
+      </div>
+      <div class="tax-row">
+        <label for="haulLiquidityMin">Minimum liquidity — <span id="haulLiquidityLabel">15%</span></label>
+        <input type="range" id="haulLiquidityMin" min="0" max="100" step="5" value="15">
       </div>
       <div id="haulResults"></div>
     </div>
@@ -574,7 +578,7 @@ function renderTable() {
           </tr>
         </thead>
         <tbody>
-          ${rows.slice(0, 60).map(r => `
+          ${rows.map(r => `
             <tr>
               <td class="item-name">${r.name}${r.npcFlag ? '<span class="npc-tag">NPC</span>' : ''}</td>
               ${cols.map(c => `<td class="num ${c.cls || ''}"${c.titleFmt ? ` title="${c.titleFmt(r)}"` : ''}>${c.fmt(r)}</td>`).join('')}
@@ -742,12 +746,24 @@ updateTaxLabel();
 const cargoCapacityInput = document.getElementById('cargoCapacity');
 const findHaulBtn = document.getElementById('findHaul');
 const haulResultsEl = document.getElementById('haulResults');
+const haulLiquidityInput = document.getElementById('haulLiquidityMin');
+const haulLiquidityLabel = document.getElementById('haulLiquidityLabel');
+let haulMinLiquidity = 15; // 0-100, scoped to the Hauling Finder only - never filters the main table
+
+haulLiquidityInput.addEventListener('input', () => {
+  haulMinLiquidity = parseInt(haulLiquidityInput.value, 10);
+  haulLiquidityLabel.textContent = haulMinLiquidity === 0 ? '0% (no filter)' : haulMinLiquidity + '%';
+});
 
 function findOptimalHaul(capacity) {
-  const candidates = currentRows
-    .filter(r => typeof r.m3 === 'number' && r.m3 > 0 && typeof r.iskPerM3 === 'number')
+  // This filter is local to the Hauling Finder's own candidate pool - it reads currentRows
+  // but never writes back to it, so the main results table is never affected by this setting.
+  const eligible = currentRows.filter(r => typeof r.m3 === 'number' && r.m3 > 0 && typeof r.iskPerM3 === 'number');
+  const candidates = eligible
+    .filter(r => typeof r.pctOfDailyVol === 'number' && r.pctOfDailyVol >= haulMinLiquidity)
     .slice()
     .sort((a, b) => b.iskPerM3 - a.iskPerM3);
+  const excludedForLiquidity = eligible.length - candidates.length;
 
   let remaining = capacity;
   const picks = [];
@@ -756,11 +772,11 @@ function findOptimalHaul(capacity) {
     const maxByCapacity = Math.floor(remaining / r.m3);
     const qty = Math.min(maxByCapacity, r.unitsAvail);
     if (qty > 0) {
-      picks.push({ name: r.name, qty, m3Used: qty * r.m3, iskCost: qty * r.buyPrice, iskProfit: qty * r.marginUnit });
+      picks.push({ name: r.name, qty, m3Used: qty * r.m3, iskCost: qty * r.buyPrice, iskProfit: qty * r.marginUnit, liquidity: r.pctOfDailyVol });
       remaining -= qty * r.m3;
     }
   }
-  return { picks, m3Used: capacity - remaining };
+  return { picks, m3Used: capacity - remaining, excludedForLiquidity };
 }
 
 function runHaulFinder() {
@@ -776,10 +792,10 @@ function runHaulFinder() {
   }
 
   const stillLoading = currentRows.some(r => r.m3 === null);
-  const { picks, m3Used } = findOptimalHaul(capacity);
+  const { picks, m3Used, excludedForLiquidity } = findOptimalHaul(capacity);
 
   if (!picks.length) {
-    haulResultsEl.innerHTML = `<div class="empty" style="padding:1.2rem;">Nothing fits in that capacity yet — try a larger number.</div>`;
+    haulResultsEl.innerHTML = `<div class="empty" style="padding:1.2rem;">Nothing fits in that capacity yet — try a larger number or lowering the minimum liquidity.</div>`;
     return;
   }
 
@@ -788,6 +804,7 @@ function runHaulFinder() {
 
   haulResultsEl.innerHTML = `
     ${stillLoading ? '<div class="status-line">Still loading cargo data for some items — results may improve once that finishes.</div>' : ''}
+    ${excludedForLiquidity > 0 ? `<div class="status-line">${excludedForLiquidity} item${excludedForLiquidity === 1 ? '' : 's'} skipped for being below ${haulMinLiquidity}% liquidity.</div>` : ''}
     <div class="haul-summary-row">
       <span>${m3Used.toLocaleString(undefined,{maximumFractionDigits:1})} / ${capacity.toLocaleString()} m³ used</span>
       <span>cost: <b>${Math.round(totalCost).toLocaleString()}</b> ISK</span>
@@ -796,7 +813,7 @@ function runHaulFinder() {
     <div class="table-scroll" style="overflow-x:auto;">
       <table>
         <thead>
-          <tr><th>Item</th><th class="num">Qty</th><th class="num">m³ used</th><th class="num">ISK cost</th><th class="num">ISK profit</th></tr>
+          <tr><th>Item</th><th class="num">Qty</th><th class="num">m³ used</th><th class="num">ISK cost</th><th class="num">ISK profit</th><th class="num">Liquidity</th></tr>
         </thead>
         <tbody>
           ${picks.map(p => `
@@ -806,6 +823,7 @@ function runHaulFinder() {
               <td class="num">${p.m3Used.toLocaleString(undefined,{maximumFractionDigits:1})}</td>
               <td class="num">${Math.round(p.iskCost).toLocaleString()}</td>
               <td class="num margin-pos">${Math.round(p.iskProfit).toLocaleString()}</td>
+              <td class="num">${p.liquidity != null ? p.liquidity.toFixed(1) + '%' : '—'}</td>
             </tr>
           `).join('')}
         </tbody>
