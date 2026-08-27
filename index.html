@@ -244,6 +244,11 @@
       </datalist>
     </div>
 
+    <div class="tax-row">
+      <label for="mainLiquidityMin">Minimum liquidity — <span id="mainLiquidityLabel">0% (show everything)</span></label>
+      <input type="range" id="mainLiquidityMin" min="0" max="100" step="5" value="0">
+    </div>
+
     <button class="scan-btn" id="scan">Scan market</button>
     <div class="status-line" id="status"></div>
   </div>
@@ -513,6 +518,7 @@ let sortDir = -1;
 
 // Sales tax: 7.5% base, reduced 11% (of the base rate) per Accounting skill level, I-V.
 let accountingLevel = 0; // 0-5, persists for the session, resets on reload
+let mainMinLiquidity = 0; // 0-100, filters the main table's display only - defaults to showing everything
 function currentTaxRate() {
   return 0.075 * (1 - accountingLevel * 0.11);
 }
@@ -558,12 +564,21 @@ function renderTable() {
     resultsEl.innerHTML = `<div class="empty">No profitable overlap found between these two stations right now.</div>`;
     return;
   }
+  // null pctOfDailyVol means liquidity hasn't loaded yet for that row - let it through rather
+  // than hiding it prematurely; it'll be re-evaluated on the next render once data arrives.
+  const visibleRows = currentRows.filter(r => typeof r.pctOfDailyVol !== 'number' || r.pctOfDailyVol >= mainMinLiquidity);
+  const hiddenCount = currentRows.length - visibleRows.length;
+  if (!visibleRows.length) {
+    resultsEl.innerHTML = `<div class="empty">${currentRows.length} item${currentRows.length === 1 ? '' : 's'} found, but all are below the ${mainMinLiquidity}% liquidity filter. Try lowering it.</div>`;
+    return;
+  }
   const cols = COLUMNS.filter(c => visibleCols.has(c.key));
-  const rows = [...currentRows].sort((a, b) => (numOrMin(a[sortKey]) - numOrMin(b[sortKey])) * sortDir);
+  const rows = [...visibleRows].sort((a, b) => (numOrMin(a[sortKey]) - numOrMin(b[sortKey])) * sortDir);
 
   resultsEl.innerHTML = `
     <div class="panel" style="padding:0.75rem 0.9rem;">
       ${renderColumnToggles()}
+      ${hiddenCount > 0 ? `<div class="status-line" style="margin:0.6rem 0 0;">Showing ${visibleRows.length} of ${currentRows.length} — ${hiddenCount} hidden below ${mainMinLiquidity}% liquidity.</div>` : ''}
     </div>
     <div class="panel table-scroll" style="padding:0; overflow-x:auto;">
       <table class="results-table">
@@ -737,6 +752,14 @@ accountingSlider.addEventListener('input', () => {
   }
 });
 updateTaxLabel();
+
+const mainLiquidityInput = document.getElementById('mainLiquidityMin');
+const mainLiquidityLabel = document.getElementById('mainLiquidityLabel');
+mainLiquidityInput.addEventListener('input', () => {
+  mainMinLiquidity = parseInt(mainLiquidityInput.value, 10);
+  mainLiquidityLabel.textContent = mainMinLiquidity === 0 ? '0% (show everything)' : mainMinLiquidity + '%';
+  if (currentRows.length) renderTable();
+});
 
 // --- Automatic Hauling Finder ---
 // Greedy bin-pack by ISK/m³: sort candidates by profit density descending, take as many units
