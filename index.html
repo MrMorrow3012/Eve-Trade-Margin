@@ -246,7 +246,7 @@
 
     <div class="tax-row">
       <label for="mainLiquidityMin">Minimum liquidity — <span id="mainLiquidityLabel">0% (show everything)</span></label>
-      <input type="range" id="mainLiquidityMin" min="0" max="100" step="5" value="0">
+      <input type="range" id="mainLiquidityMin" min="0" max="24" step="1" value="0">
     </div>
 
     <button class="scan-btn" id="scan">Scan market</button>
@@ -269,7 +269,7 @@
       </div>
       <div class="tax-row">
         <label for="haulLiquidityMin">Minimum liquidity — <span id="haulLiquidityLabel">15%</span></label>
-        <input type="range" id="haulLiquidityMin" min="0" max="100" step="5" value="15">
+        <input type="range" id="haulLiquidityMin" min="0" max="24" step="1" value="7">
       </div>
       <div id="haulResults"></div>
     </div>
@@ -519,6 +519,14 @@ let sortDir = -1;
 // Sales tax: 7.5% base, reduced 11% (of the base rate) per Accounting skill level, I-V.
 let accountingLevel = 0; // 0-5, persists for the session, resets on reload
 let mainMinLiquidity = 0; // 0-100, filters the main table's display only - defaults to showing everything
+
+// Liquidity sliders are index-based into this table rather than a plain 0-100 range, since most
+// of the meaningful distinction between items lives in the low end (0.1% vs 2.5% vs 5%) - a
+// uniform step would blow right past that in one notch.
+const LIQUIDITY_STEPS = [0, 0.1, 0.5, 1.0, 2.5, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100];
+function fmtLiqPct(v) {
+  return (v % 1 === 0 ? v : v.toFixed(1)) + '%';
+}
 function currentTaxRate() {
   return 0.075 * (1 - accountingLevel * 0.11);
 }
@@ -756,8 +764,8 @@ updateTaxLabel();
 const mainLiquidityInput = document.getElementById('mainLiquidityMin');
 const mainLiquidityLabel = document.getElementById('mainLiquidityLabel');
 mainLiquidityInput.addEventListener('input', () => {
-  mainMinLiquidity = parseInt(mainLiquidityInput.value, 10);
-  mainLiquidityLabel.textContent = mainMinLiquidity === 0 ? '0% (show everything)' : mainMinLiquidity + '%';
+  mainMinLiquidity = LIQUIDITY_STEPS[parseInt(mainLiquidityInput.value, 10)];
+  mainLiquidityLabel.textContent = mainMinLiquidity === 0 ? '0% (show everything)' : fmtLiqPct(mainMinLiquidity);
   if (currentRows.length) renderTable();
 });
 
@@ -774,8 +782,8 @@ const haulLiquidityLabel = document.getElementById('haulLiquidityLabel');
 let haulMinLiquidity = 15; // 0-100, scoped to the Hauling Finder only - never filters the main table
 
 haulLiquidityInput.addEventListener('input', () => {
-  haulMinLiquidity = parseInt(haulLiquidityInput.value, 10);
-  haulLiquidityLabel.textContent = haulMinLiquidity === 0 ? '0% (no filter)' : haulMinLiquidity + '%';
+  haulMinLiquidity = LIQUIDITY_STEPS[parseInt(haulLiquidityInput.value, 10)];
+  haulLiquidityLabel.textContent = haulMinLiquidity === 0 ? '0% (no filter)' : fmtLiqPct(haulMinLiquidity);
 });
 
 function findOptimalHaul(capacity) {
