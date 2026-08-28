@@ -123,6 +123,7 @@
     margin:0.85rem 0; min-height:1.1rem;
   }
   .status-line.err{color:var(--red);}
+  .status-line.warn{color:var(--amber);}
 
   /* route strip - signature element */
   .route-strip{
@@ -245,12 +246,22 @@
     </div>
 
     <div class="tax-row">
+      <label for="brokerRelationsLevel">Broker's fee — <span id="brokerLabel">Broker Relations 0 · 3.00%</span></label>
+      <input type="range" id="brokerRelationsLevel" min="0" max="5" step="1" value="0" list="brokerTicks">
+      <datalist id="brokerTicks">
+        <option value="0"></option><option value="1"></option><option value="2"></option>
+        <option value="3"></option><option value="4"></option><option value="5"></option>
+      </datalist>
+    </div>
+
+    <div class="tax-row">
       <label for="mainLiquidityMin">Minimum liquidity — <span id="mainLiquidityLabel">0% (show everything)</span></label>
       <input type="range" id="mainLiquidityMin" min="0" max="24" step="1" value="0">
     </div>
 
     <button class="scan-btn" id="scan">Scan market</button>
     <div class="status-line" id="status"></div>
+    <div class="status-line" id="scanAge"></div>
   </div>
 
   <div id="routePanel"></div>
@@ -259,11 +270,15 @@
   <details class="panel haul-finder-panel" id="haulFinderDetails">
     <summary>Automatic Hauling Finder</summary>
     <div class="haul-finder-body">
-      <p class="haul-finder-blurb">Enter your ship's cargo capacity and this fills it with items from your last scan, highest ISK/m³ first, for the most profit that fits in the hold. Low-liquidity items are excluded below so it doesn't recommend stock that's unlikely to actually sell — this only affects picks here, the main results table above always shows every item.</p>
+      <p class="haul-finder-blurb">Enter your ship's cargo capacity and this fills it with items from your last scan, highest ISK/m³ first, for the most profit that fits in the hold. Low-liquidity items are excluded below so it doesn't recommend stock that's unlikely to actually sell — this only affects picks here, the main results table above always shows every item. Each distinct item needs a buy order at origin and a sell order at destination, so the plan is also capped to fit your open order slots.</p>
       <div class="row">
         <div class="field">
           <label for="cargoCapacity">Cargo capacity (m³)</label>
           <input type="number" id="cargoCapacity" placeholder="e.g. 5000" min="0" step="any">
+        </div>
+        <div class="field">
+          <label for="orderSlots">Open order slots</label>
+          <input type="number" id="orderSlots" placeholder="e.g. 5" min="2" step="1" value="5">
         </div>
         <button class="scan-btn haul-btn" id="findHaul">Find optimal haul</button>
       </div>
@@ -301,6 +316,7 @@ const HUBS = {
 const originSel = document.getElementById('origin');
 const destSel = document.getElementById('dest');
 const statusEl = document.getElementById('status');
+const scanAgeEl = document.getElementById('scanAge');
 const scanBtn = document.getElementById('scan');
 const routePanel = document.getElementById('routePanel');
 const resultsEl = document.getElementById('results');
@@ -324,6 +340,27 @@ function setStatus(msg, isErr=false) {
   statusEl.textContent = msg;
   statusEl.className = 'status-line' + (isErr ? ' err' : '');
 }
+
+// "Scanned X ago" - a scan is a snapshot, and it's easy to come back to a tab hours later
+// and forget prices have moved on. Color escalates the longer it's been sitting.
+function formatElapsed(ms) {
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return 'just now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return min + (min === 1 ? ' minute' : ' minutes') + ' ago';
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return hr + (hr === 1 ? ' hour' : ' hours') + ' ago';
+  const day = Math.floor(hr / 24);
+  return day + (day === 1 ? ' day' : ' days') + ' ago';
+}
+function updateScanAge() {
+  if (lastScanTime === null) { scanAgeEl.textContent = ''; return; }
+  const ms = Date.now() - lastScanTime;
+  const min = ms / 60000;
+  scanAgeEl.textContent = 'Scanned ' + formatElapsed(ms) + (min >= 5 ? ' — prices may have moved, consider rescanning' : '');
+  scanAgeEl.className = 'status-line' + (min >= 30 ? ' err' : min >= 5 ? ' warn' : '');
+}
+setInterval(updateScanAge, 15000);
 
 async function fetchAllPages(url) {
   const first = await fetch(url + (url.includes('?') ? '&' : '?') + 'page=1');
@@ -512,12 +549,17 @@ const COLUMNS = [
 let visibleCols = new Set(COLUMNS.map(c => c.key));
 let colPanelOpen = false;
 let allRows = [];      // every profitable-before-tax overlap item from the last scan, tax-independent
+let lastScanTime = null; // Date.now() of the last completed scan, for the staleness indicator
 let currentRows = [];  // allRows re-derived at the current tax rate - this is what actually renders
 let sortKey = 'marginTotal';
 let sortDir = -1;
 
 // Sales tax: 7.5% base, reduced 11% (of the base rate) per Accounting skill level, I-V.
 let accountingLevel = 0; // 0-5, persists for the session, resets on reload
+// Broker's fee: 3% base, reduced 10% (of the base rate) per Broker Relations level, I-V.
+// Charged when an order is PLACED - once on the buy order at origin, once on the sell
+// order at destination - separately from sales tax, which is only charged when a sale fills.
+let brokerRelationsLevel = 0; // 0-5, persists for the session, resets on reload
 let mainMinLiquidity = 0; // 0-100, filters the main table's display only - defaults to showing everything
 
 // Liquidity sliders are index-based into this table rather than a plain 0-100 range, since most
@@ -530,15 +572,22 @@ function fmtLiqPct(v) {
 function currentTaxRate() {
   return 0.075 * (1 - accountingLevel * 0.11);
 }
+function currentBrokerRate() {
+  return 0.03 * (1 - brokerRelationsLevel * 0.10);
+}
 function recomputeAndFilter() {
-  const rate = currentTaxRate();
+  const taxRate = currentTaxRate();
+  const brokerRate = currentBrokerRate();
   currentRows = allRows.map(r => {
-    const netSell = r.sellPrice * (1 - rate);
-    const marginUnit = netSell - r.buyPrice;
+    // Buying: pay the broker's fee on top of the buy order's own value.
+    // Selling: sales tax AND broker's fee both come off the sell order's value.
+    const effectiveBuyCost = r.buyPrice * (1 + brokerRate);
+    const netSell = r.sellPrice * (1 - taxRate - brokerRate);
+    const marginUnit = netSell - effectiveBuyCost;
     return {
       ...r,
       marginUnit,
-      marginPct: (marginUnit / r.buyPrice) * 100,
+      marginPct: (marginUnit / effectiveBuyCost) * 100,
       marginTotal: marginUnit * r.unitsAvail,
       iskPerM3: (typeof r.m3 === 'number' && r.m3 > 0) ? marginUnit / r.m3 : null,
     };
@@ -733,7 +782,9 @@ async function scan() {
 
     recomputeAndFilter();
 
+    lastScanTime = Date.now();
     setStatus(`Done — ${currentRows.length} profitable items found across ${routeInfo.jumps} jumps.`);
+    updateScanAge();
     renderTable();
   } catch (err) {
     console.error(err);
@@ -761,6 +812,21 @@ accountingSlider.addEventListener('input', () => {
 });
 updateTaxLabel();
 
+const brokerSlider = document.getElementById('brokerRelationsLevel');
+const brokerLabel = document.getElementById('brokerLabel');
+function updateBrokerLabel() {
+  brokerLabel.textContent = `Broker Relations ${ROMAN[brokerRelationsLevel]} · ${(currentBrokerRate() * 100).toFixed(2)}%`;
+}
+brokerSlider.addEventListener('input', () => {
+  brokerRelationsLevel = parseInt(brokerSlider.value, 10);
+  updateBrokerLabel();
+  if (allRows.length) {
+    recomputeAndFilter();
+    renderTable();
+  }
+});
+updateBrokerLabel();
+
 const mainLiquidityInput = document.getElementById('mainLiquidityMin');
 const mainLiquidityLabel = document.getElementById('mainLiquidityLabel');
 mainLiquidityInput.addEventListener('input', () => {
@@ -775,6 +841,7 @@ mainLiquidityInput.addEventListener('input', () => {
 // This is the standard near-optimal approach for this kind of bounded knapsack - not a
 // guaranteed perfect global maximum, but very close in practice and instant to compute.
 const cargoCapacityInput = document.getElementById('cargoCapacity');
+const orderSlotsInput = document.getElementById('orderSlots');
 const findHaulBtn = document.getElementById('findHaul');
 const haulResultsEl = document.getElementById('haulResults');
 const haulLiquidityInput = document.getElementById('haulLiquidityMin');
@@ -786,7 +853,7 @@ haulLiquidityInput.addEventListener('input', () => {
   haulLiquidityLabel.textContent = haulMinLiquidity === 0 ? '0% (no filter)' : fmtLiqPct(haulMinLiquidity);
 });
 
-function findOptimalHaul(capacity) {
+function findOptimalHaul(capacity, maxDistinctItems) {
   // This filter is local to the Hauling Finder's own candidate pool - it reads currentRows
   // but never writes back to it, so the main results table is never affected by this setting.
   const eligible = currentRows.filter(r => typeof r.m3 === 'number' && r.m3 > 0 && typeof r.iskPerM3 === 'number');
@@ -800,6 +867,8 @@ function findOptimalHaul(capacity) {
   const picks = [];
   for (const r of candidates) {
     if (remaining <= 0) break;
+    if (picks.length >= maxDistinctItems) break; // out of order slots for another distinct item -
+                                                   // still fine to have taken more of an item already picked
     const maxByCapacity = Math.floor(remaining / r.m3);
     const qty = Math.min(maxByCapacity, r.unitsAvail);
     if (qty > 0) {
@@ -812,6 +881,7 @@ function findOptimalHaul(capacity) {
 
 function runHaulFinder() {
   const capacity = parseFloat(cargoCapacityInput.value);
+  const orderSlots = parseInt(orderSlotsInput.value, 10);
 
   if (!currentRows.length) {
     haulResultsEl.innerHTML = `<div class="empty" style="padding:1.2rem;">Run a scan first.</div>`;
@@ -821,9 +891,14 @@ function runHaulFinder() {
     haulResultsEl.innerHTML = `<div class="empty" style="padding:1.2rem;">Enter a cargo capacity greater than 0.</div>`;
     return;
   }
+  if (!orderSlots || orderSlots < 2) {
+    haulResultsEl.innerHTML = `<div class="empty" style="padding:1.2rem;">Enter at least 2 open order slots (1 buy order + 1 sell order needed per item).</div>`;
+    return;
+  }
 
+  const maxDistinctItems = Math.floor(orderSlots / 2);
   const stillLoading = currentRows.some(r => r.m3 === null);
-  const { picks, m3Used, excludedForLiquidity } = findOptimalHaul(capacity);
+  const { picks, m3Used, excludedForLiquidity } = findOptimalHaul(capacity, maxDistinctItems);
 
   if (!picks.length) {
     haulResultsEl.innerHTML = `<div class="empty" style="padding:1.2rem;">Nothing fits in that capacity yet — try a larger number or lowering the minimum liquidity.</div>`;
@@ -832,10 +907,12 @@ function runHaulFinder() {
 
   const totalCost = picks.reduce((s, p) => s + p.iskCost, 0);
   const totalProfit = picks.reduce((s, p) => s + p.iskProfit, 0);
+  const slotsUsed = picks.length * 2;
 
   haulResultsEl.innerHTML = `
     ${stillLoading ? '<div class="status-line">Still loading cargo data for some items — results may improve once that finishes.</div>' : ''}
     ${excludedForLiquidity > 0 ? `<div class="status-line">${excludedForLiquidity} item${excludedForLiquidity === 1 ? '' : 's'} skipped for being below ${haulMinLiquidity}% liquidity.</div>` : ''}
+    <div class="status-line">Uses ${slotsUsed} of ${orderSlots} order slots (${picks.length} item${picks.length === 1 ? '' : 's'} × 1 buy order + 1 sell order).</div>
     <div class="haul-summary-row">
       <span>${m3Used.toLocaleString(undefined,{maximumFractionDigits:1})} / ${capacity.toLocaleString()} m³ used</span>
       <span>cost: <b>${Math.round(totalCost).toLocaleString()}</b> ISK</span>
