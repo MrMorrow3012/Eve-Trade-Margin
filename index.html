@@ -45,6 +45,19 @@
   .brand span{color:var(--cyan);}
   .tagline{font-size:0.7rem; color:var(--muted); letter-spacing:0.08em; text-transform:uppercase; margin-top:0.15rem;}
 
+  .tip-panel{display:flex; align-items:center; gap:0.75rem; padding:0.7rem 0.9rem;}
+  .tip-nav{
+    background:var(--panel-raised); border:1px solid var(--line); color:var(--cyan);
+    border-radius:6px; width:2rem; height:2rem; flex:0 0 auto; cursor:pointer;
+    font-size:1rem; line-height:1;
+  }
+  .tip-nav:hover{border-color:var(--cyan);}
+  .tip-text{flex:1; font-size:0.8rem; color:var(--text); line-height:1.4;}
+  .tip-text::before{
+    content:'TIP — '; color:var(--cyan); font-family:'JetBrains Mono',monospace;
+    font-weight:600; letter-spacing:0.04em;
+  }
+
   .panel{
     background:var(--panel);
     border:1px solid var(--line);
@@ -218,6 +231,12 @@
     </div>
   </header>
 
+  <div class="panel tip-panel">
+    <button class="tip-nav" id="tipPrev" aria-label="Previous tip">‹</button>
+    <div class="tip-text" id="tipText"></div>
+    <button class="tip-nav" id="tipNext" aria-label="Next tip">›</button>
+  </div>
+
   <div class="panel">
     <div class="row">
       <div class="field">
@@ -270,15 +289,11 @@
   <details class="panel haul-finder-panel" id="haulFinderDetails">
     <summary>Automatic Hauling Finder</summary>
     <div class="haul-finder-body">
-      <p class="haul-finder-blurb">Enter your ship's cargo capacity and this fills it with items from your last scan, highest ISK/m³ first, for the most profit that fits in the hold. Low-liquidity items are excluded below so it doesn't recommend stock that's unlikely to actually sell — this only affects picks here, the main results table above always shows every item. Each distinct item needs a buy order at origin and a sell order at destination, so the plan is also capped to fit your open order slots.</p>
+      <p class="haul-finder-blurb">Enter your ship's cargo capacity and this fills it with items from your last scan, highest ISK/m³ first, for the most profit that fits in the hold. Low-liquidity items are excluded below so it doesn't recommend stock that's unlikely to actually sell — this only affects picks here, the main results table above always shows every item.</p>
       <div class="row">
         <div class="field">
           <label for="cargoCapacity">Cargo capacity (m³)</label>
           <input type="number" id="cargoCapacity" placeholder="e.g. 5000" min="0" step="any">
-        </div>
-        <div class="field">
-          <label for="orderSlots">Open order slots</label>
-          <input type="number" id="orderSlots" placeholder="e.g. 5" min="2" step="1" value="5">
         </div>
         <button class="scan-btn haul-btn" id="findHaul">Find optimal haul</button>
       </div>
@@ -336,6 +351,34 @@ document.getElementById('swap').addEventListener('click', () => {
   originSel.value = destSel.value;
   destSel.value = a;
 });
+
+const TIPS = [
+  'Have a constant supply of items being sold? Why not cut out the middleman, contact the seller and set up a deal.',
+  "NPC orders (~365-day duration) act as a price floor or ceiling — the real opportunity usually sits between them, not at them.",
+  'ISK/m³ matters more than raw margin when cargo space is the bottleneck — a small, dense item can out-earn a bulkier one with a bigger total margin.',
+  'A scan is a snapshot. Prices move — rescan before committing to a large buy.',
+  "Low liquidity means your order might sit unfilled for a long time, even at a good price.",
+  "Every jump through low-sec or null-sec is a chance to get scanned — the safest route isn't always the shortest one.",
+  'Training Accounting and Broker Relations pays for itself fast once you\u2019re moving real volume.',
+];
+let tipIndex = 0;
+let tipTimer = null;
+function renderTip() {
+  document.getElementById('tipText').textContent = TIPS[tipIndex];
+}
+function goToTip(newIndex) {
+  tipIndex = (newIndex + TIPS.length) % TIPS.length;
+  renderTip();
+  resetTipTimer();
+}
+function resetTipTimer() {
+  if (tipTimer) clearInterval(tipTimer);
+  tipTimer = setInterval(() => goToTip(tipIndex + 1), 30000);
+}
+document.getElementById('tipPrev').addEventListener('click', () => goToTip(tipIndex - 1));
+document.getElementById('tipNext').addEventListener('click', () => goToTip(tipIndex + 1));
+renderTip();
+resetTipTimer();
 
 function setStatus(msg, isErr=false) {
   statusEl.textContent = msg;
@@ -871,7 +914,6 @@ mainLiquidityInput.addEventListener('input', () => {
 // This is the standard near-optimal approach for this kind of bounded knapsack - not a
 // guaranteed perfect global maximum, but very close in practice and instant to compute.
 const cargoCapacityInput = document.getElementById('cargoCapacity');
-const orderSlotsInput = document.getElementById('orderSlots');
 const findHaulBtn = document.getElementById('findHaul');
 const haulResultsEl = document.getElementById('haulResults');
 const haulLiquidityInput = document.getElementById('haulLiquidityMin');
@@ -883,7 +925,7 @@ haulLiquidityInput.addEventListener('input', () => {
   haulLiquidityLabel.textContent = haulMinLiquidity === 0 ? '0% (no filter)' : fmtLiqPct(haulMinLiquidity);
 });
 
-function findOptimalHaul(capacity, maxDistinctItems) {
+function findOptimalHaul(capacity) {
   // This filter is local to the Hauling Finder's own candidate pool - it reads currentRows
   // but never writes back to it, so the main results table is never affected by this setting.
   const eligible = currentRows.filter(r => typeof r.m3 === 'number' && r.m3 > 0 && typeof r.iskPerM3 === 'number');
@@ -897,8 +939,6 @@ function findOptimalHaul(capacity, maxDistinctItems) {
   const picks = [];
   for (const r of candidates) {
     if (remaining <= 0) break;
-    if (picks.length >= maxDistinctItems) break; // out of order slots for another distinct item -
-                                                   // still fine to have taken more of an item already picked
     const maxByCapacity = Math.floor(remaining / r.m3);
     const qty = Math.min(maxByCapacity, r.unitsAvail);
     if (qty > 0) {
@@ -911,7 +951,6 @@ function findOptimalHaul(capacity, maxDistinctItems) {
 
 function runHaulFinder() {
   const capacity = parseFloat(cargoCapacityInput.value);
-  const orderSlots = parseInt(orderSlotsInput.value, 10);
 
   if (!currentRows.length) {
     haulResultsEl.innerHTML = `<div class="empty" style="padding:1.2rem;">Run a scan first.</div>`;
@@ -921,14 +960,9 @@ function runHaulFinder() {
     haulResultsEl.innerHTML = `<div class="empty" style="padding:1.2rem;">Enter a cargo capacity greater than 0.</div>`;
     return;
   }
-  if (!orderSlots || orderSlots < 2) {
-    haulResultsEl.innerHTML = `<div class="empty" style="padding:1.2rem;">Enter at least 2 open order slots (1 buy order + 1 sell order needed per item).</div>`;
-    return;
-  }
 
-  const maxDistinctItems = Math.floor(orderSlots / 2);
   const stillLoading = currentRows.some(r => r.m3 === null);
-  const { picks, m3Used, excludedForLiquidity } = findOptimalHaul(capacity, maxDistinctItems);
+  const { picks, m3Used, excludedForLiquidity } = findOptimalHaul(capacity);
 
   if (!picks.length) {
     haulResultsEl.innerHTML = `<div class="empty" style="padding:1.2rem;">Nothing fits in that capacity yet — try a larger number or lowering the minimum liquidity.</div>`;
@@ -937,12 +971,10 @@ function runHaulFinder() {
 
   const totalCost = picks.reduce((s, p) => s + p.iskCost, 0);
   const totalProfit = picks.reduce((s, p) => s + p.iskProfit, 0);
-  const slotsUsed = picks.length * 2;
 
   haulResultsEl.innerHTML = `
     ${stillLoading ? '<div class="status-line">Still loading cargo data for some items — results may improve once that finishes.</div>' : ''}
     ${excludedForLiquidity > 0 ? `<div class="status-line">${excludedForLiquidity} item${excludedForLiquidity === 1 ? '' : 's'} skipped for being below ${haulMinLiquidity}% liquidity.</div>` : ''}
-    <div class="status-line">Uses ${slotsUsed} of ${orderSlots} order slots (${picks.length} item${picks.length === 1 ? '' : 's'} × 1 buy order + 1 sell order).</div>
     <div class="haul-summary-row">
       <span>${m3Used.toLocaleString(undefined,{maximumFractionDigits:1})} / ${capacity.toLocaleString()} m³ used</span>
       <span>cost: <b>${Math.round(totalCost).toLocaleString()}</b> ISK</span>
