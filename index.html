@@ -292,6 +292,7 @@
 
   <footer>
     Data via EVE ESI (esi.evetech.net) · Public market endpoints, no login required<br>
+    Buy/sell prices and units avail. are walked across the full order book, not just the top order — a volume-weighted average once more than one order is needed to fill the quantity shown.<br>
     m³, daily volume, and liquidity load after the main scan — large result sets take longer.<br>
     Avg daily volume is region-wide over the last 30 days (ESI has no per-station history).<br>
     Liquidity % = item's own daily volume vs. 5% of all scanned items' combined volume, capped at 100%.<br>
@@ -534,8 +535,8 @@ function exactIsk(value) {
 
 // Column registry drives both the table and the show/hide toggle panel.
 const COLUMNS = [
-  { key: 'buyPrice',      label: 'Buy @ origin',    width: 105, fmt: r => formatIsk(r.buyPrice), titleFmt: r => exactIsk(r.buyPrice) },
-  { key: 'sellPrice',     label: 'Sell @ dest',      width: 100, fmt: r => formatIsk(r.sellPrice), titleFmt: r => exactIsk(r.sellPrice) },
+  { key: 'buyPrice',      label: 'Buy @ origin',    width: 105, fmt: r => formatIsk(r.buyPrice), titleFmt: r => exactIsk(r.buyPrice) + ' (vol-weighted avg)' },
+  { key: 'sellPrice',     label: 'Sell @ dest',      width: 100, fmt: r => formatIsk(r.sellPrice), titleFmt: r => exactIsk(r.sellPrice) + ' (vol-weighted avg)' },
   { key: 'marginUnit',    label: 'Margin/unit',      width: 100, fmt: r => formatIsk(r.marginUnit), titleFmt: r => exactIsk(r.marginUnit), cls: 'margin-pos' },
   { key: 'marginPct',     label: '%',                width: 65,  fmt: r => r.marginPct.toFixed(1) + '%', cls: 'margin-pos' },
   { key: 'unitsAvail',    label: 'Units avail.',     width: 120, fmt: r => r.unitsAvail.toLocaleString() },
@@ -713,36 +714,65 @@ async function scan() {
     const destOrders = await fetchAllPages(`${ESI}/markets/${dest.region_id}/orders/?order_type=buy`);
     const destStationOrders = destOrders.filter(o => o.location_id === dest.station_id);
 
-    // best (lowest) sell price per type at origin
-    const bestSell = {};
+    // Group every order by type_id, sorted so we can walk the book (cheapest sells first,
+    // highest buys first) instead of only ever reading the single best price - a thin order
+    // sitting at the best price shouldn't hide a deep, still-profitable order right behind it.
+    const sellBook = {};
     for (const o of originStationOrders) {
       if (excludeNpc && isNpcOrder(o)) continue;
-      const cur = bestSell[o.type_id];
-      if (!cur || o.price < cur.price) bestSell[o.type_id] = { price: o.price, qty: o.volume_remain, npc: isNpcOrder(o) };
+      (sellBook[o.type_id] = sellBook[o.type_id] || []).push({ price: o.price, qty: o.volume_remain, npc: isNpcOrder(o) });
     }
-    // best (highest) buy price per type at dest
-    const bestBuy = {};
+    for (const id in sellBook) sellBook[id].sort((a, b) => a.price - b.price);
+
+    const buyBook = {};
     for (const o of destStationOrders) {
       if (excludeNpc && isNpcOrder(o)) continue;
-      const cur = bestBuy[o.type_id];
-      if (!cur || o.price > cur.price) bestBuy[o.type_id] = { price: o.price, qty: o.volume_remain, npc: isNpcOrder(o) };
+      (buyBook[o.type_id] = buyBook[o.type_id] || []).push({ price: o.price, qty: o.volume_remain, npc: isNpcOrder(o) });
+    }
+    for (const id in buyBook) buyBook[id].sort((a, b) => b.price - a.price);
+
+    // Walk both books together: match the cheapest remaining sell against the highest
+    // remaining buy, repeatedly, as long as that next match is still profitable. Returns
+    // the total tradeable quantity and the volume-weighted average price on each side -
+    // buying 500,000 units across a deep book costs more per unit, on average, than buying
+    // just the first 2 at the very top price, and this reflects that honestly.
+    function walkBooks(sells, buys) {
+      let i = 0, j = 0, sellLeft = sells[0].qty, buyLeft = buys[0].qty;
+      let totalQty = 0, totalCost = 0, totalRevenue = 0, sawNpc = false;
+      while (i < sells.length && j < buys.length && sells[i].price < buys[j].price) {
+        const qty = Math.min(sellLeft, buyLeft);
+        totalQty += qty;
+        totalCost += qty * sells[i].price;
+        totalRevenue += qty * buys[j].price;
+        if (sells[i].npc || buys[j].npc) sawNpc = true;
+        sellLeft -= qty;
+        buyLeft -= qty;
+        if (sellLeft === 0 && ++i < sells.length) sellLeft = sells[i].qty;
+        if (buyLeft === 0 && ++j < buys.length) buyLeft = buys[j].qty;
+      }
+      return totalQty > 0 ? { qty: totalQty, avgBuy: totalCost / totalQty, avgSell: totalRevenue / totalQty, npc: sawNpc } : null;
     }
 
     setStatus('Resolving item names…');
-    const overlapIds = Object.keys(bestSell).filter(id => bestBuy[id] && bestBuy[id].price > bestSell[id].price);
+    const candidateIds = Object.keys(sellBook).filter(id => buyBook[id] && sellBook[id][0].price < buyBook[id][0].price);
+    const walked = {};
+    for (const id of candidateIds) {
+      const w = walkBooks(sellBook[id], buyBook[id]);
+      if (w) walked[id] = w;
+    }
+    const overlapIds = Object.keys(walked);
     const names = await resolveNames(overlapIds.map(Number));
 
     allRows = overlapIds.map(id => {
-      const s = bestSell[id], b = bestBuy[id];
-      const unitsAvail = Math.min(s.qty, b.qty);
+      const w = walked[id];
       return {
         type_id: id,
         name: names[id] || `Type ${id}`,
-        buyPrice: s.price,
-        sellPrice: b.price,
+        buyPrice: w.avgBuy,
+        sellPrice: w.avgSell,
         marginUnit: 0, marginPct: 0, marginTotal: 0, // placeholders - recomputeAndFilter() derives these from tax
-        unitsAvail,
-        npcFlag: s.npc || b.npc,
+        unitsAvail: w.qty,
+        npcFlag: w.npc,
         m3: null,
         iskPerM3: null,
         dailyVolume: null,
