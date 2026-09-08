@@ -298,8 +298,8 @@
         <button class="scan-btn haul-btn" id="findHaul">Find optimal haul</button>
       </div>
       <div class="tax-row">
-        <label for="haulLiquidityMin">Minimum liquidity — <span id="haulLiquidityLabel">15%</span></label>
-        <input type="range" id="haulLiquidityMin" min="0" max="24" step="1" value="7">
+        <label for="haulLiquidityMin">Minimum liquidity — <span id="haulLiquidityLabel">40%</span></label>
+        <input type="range" id="haulLiquidityMin" min="0" max="24" step="1" value="12">
       </div>
       <div id="haulResults"></div>
     </div>
@@ -310,7 +310,7 @@
     Buy/sell prices and units avail. are walked across the full order book, not just the top order — a volume-weighted average once more than one order is needed to fill the quantity shown.<br>
     m³, daily volume, and liquidity load after the main scan — large result sets take longer.<br>
     Avg daily volume is region-wide over the last 30 days (ESI has no per-station history).<br>
-    Liquidity % = item's own daily volume vs. 5% of all scanned items' combined volume, capped at 100%.<br>
+    Liquidity % is a fixed scale from the item's own daily volume alone — not relative to other items in this scan. Roughly: ~15% at 1 unit/day, ~40% at 10/day, ~65% at 100/day, ~85% at 1,000/day, 100% at 10,000+/day.<br>
     Hauling Finder packs greedily by ISK/m³ — very close to optimal, not a guaranteed perfect max.<br>
     Prices reflect the moment you scan — always double-check before undocking.
   </footer>
@@ -576,6 +576,27 @@ function exactIsk(value) {
   return Math.round(value).toLocaleString() + ' ISK';
 }
 
+// Liquidity score: a FIXED scale based only on the item's own daily volume - never relative
+// to what else happens to be in a given scan. Interpolated log-linearly between these anchor
+// points, since trading volume spans orders of magnitude and a linear scale would crush
+// everything the same way the old scan-relative version did.
+const LIQUIDITY_ANCHORS = [[0, 0], [1, 15], [10, 40], [100, 65], [1000, 85], [10000, 100]];
+function liquidityScore(dailyVolume) {
+  if (dailyVolume == null) return null; // not loaded yet
+  if (dailyVolume <= 0) return 0;
+  if (dailyVolume >= 10000) return 100;
+  for (let i = 1; i < LIQUIDITY_ANCHORS.length; i++) {
+    const [vLo, sLo] = LIQUIDITY_ANCHORS[i - 1];
+    const [vHi, sHi] = LIQUIDITY_ANCHORS[i];
+    if (dailyVolume > vHi) continue;
+    const t = vLo === 0
+      ? dailyVolume / vHi                                                          // 0->1: can't log-interpolate through zero
+      : (Math.log10(dailyVolume) - Math.log10(vLo)) / (Math.log10(vHi) - Math.log10(vLo));
+    return sLo + t * (sHi - sLo);
+  }
+  return 100;
+}
+
 // Column registry drives both the table and the show/hide toggle panel.
 const COLUMNS = [
   { key: 'buyPrice',      label: 'Buy @ origin',    width: 105, fmt: r => formatIsk(r.buyPrice), titleFmt: r => exactIsk(r.buyPrice) + ' (vol-weighted avg)' },
@@ -837,20 +858,7 @@ async function scan() {
     allRows.forEach((r, i) => {
       r.m3 = m3Results[i];
       r.dailyVolume = dailyVolResults[i];
-    });
-
-    // Liquidity % = this item's own daily volume against a fixed baseline of 5% of the
-    // combined daily volume across everything in this result set, capped at 100%. Without
-    // the cap (and without pooling against the whole set) a couple of ore types would blow
-    // the scale out for every other item, since ore trades in the millions/day.
-    const totalMarketDailyVolume = allRows.reduce((sum, r) => sum + (typeof r.dailyVolume === 'number' ? r.dailyVolume : 0), 0);
-    const fivePctThreshold = totalMarketDailyVolume * 0.05;
-    allRows.forEach(r => {
-      if (typeof r.dailyVolume === 'number' && fivePctThreshold > 0) {
-        r.pctOfDailyVol = Math.min(100, (r.dailyVolume / fivePctThreshold) * 100);
-      } else {
-        r.pctOfDailyVol = null;
-      }
+      r.pctOfDailyVol = liquidityScore(r.dailyVolume);
     });
 
     recomputeAndFilter();
@@ -918,7 +926,7 @@ const findHaulBtn = document.getElementById('findHaul');
 const haulResultsEl = document.getElementById('haulResults');
 const haulLiquidityInput = document.getElementById('haulLiquidityMin');
 const haulLiquidityLabel = document.getElementById('haulLiquidityLabel');
-let haulMinLiquidity = 15; // 0-100, scoped to the Hauling Finder only - never filters the main table
+let haulMinLiquidity = 40; // 0-100, scoped to the Hauling Finder only - never filters the main table
 
 haulLiquidityInput.addEventListener('input', () => {
   haulMinLiquidity = LIQUIDITY_STEPS[parseInt(haulLiquidityInput.value, 10)];
@@ -942,7 +950,7 @@ function findOptimalHaul(capacity) {
     const maxByCapacity = Math.floor(remaining / r.m3);
     const qty = Math.min(maxByCapacity, r.unitsAvail);
     if (qty > 0) {
-      picks.push({ name: r.name, qty, m3Used: qty * r.m3, iskCost: qty * r.buyPrice, iskProfit: qty * r.marginUnit, liquidity: r.pctOfDailyVol });
+      picks.push({ name: r.name, qty, m3Used: qty * r.m3, iskCost: qty * r.buyPrice, iskProfit: qty * r.marginUnit, liquidity: r.pctOfDailyVol, dailyVolume: r.dailyVolume });
       remaining -= qty * r.m3;
     }
   }
@@ -983,7 +991,7 @@ function runHaulFinder() {
     <div class="table-scroll" style="overflow-x:auto;">
       <table>
         <thead>
-          <tr><th>Item</th><th class="num">Qty</th><th class="num">m³ used</th><th class="num">ISK cost</th><th class="num">ISK profit</th><th class="num">Liquidity</th></tr>
+          <tr><th>Item</th><th class="num">Qty</th><th class="num">m³ used</th><th class="num">ISK cost</th><th class="num">ISK profit</th><th class="num">Daily vol</th><th class="num">Liquidity</th></tr>
         </thead>
         <tbody>
           ${picks.map(p => `
@@ -993,6 +1001,7 @@ function runHaulFinder() {
               <td class="num">${p.m3Used.toLocaleString(undefined,{maximumFractionDigits:1})}</td>
               <td class="num">${Math.round(p.iskCost).toLocaleString()}</td>
               <td class="num margin-pos">${Math.round(p.iskProfit).toLocaleString()}</td>
+              <td class="num">${p.dailyVolume != null ? Math.round(p.dailyVolume).toLocaleString() : '—'}</td>
               <td class="num">${p.liquidity != null ? p.liquidity.toFixed(1) + '%' : '—'}</td>
             </tr>
           `).join('')}
